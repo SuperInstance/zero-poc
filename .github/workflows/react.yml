@@ -1,0 +1,92 @@
+# react.yml — The Ears (v0.2, conversational)
+#
+# Wakes the agent when someone opens an issue or comments.
+# Instead of a canned acknowledgment, the agent reads the thread,
+# thinks via the vault, and replies IN the thread — a real dialogue.
+# Deep work still happens on the think heartbeat (<=15 min); this is
+# the conversational layer: manner as well as matter.
+
+name: react
+
+on:
+  issues:
+    types: [opened, reopened]
+  issue_comment:
+    types: [created]
+
+permissions:
+  id-token: write
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  react:
+    runs-on: ubuntu-latest
+    if: github.actor != 'github-actions[bot]'
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Get OIDC token
+        run: |
+          OIDC_TOKEN=$(curl -s \
+            -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=vault" \
+            | jq -r '.value')
+          echo "OIDC_TOKEN=${OIDC_TOKEN}" >> $GITHUB_ENV
+
+      - name: Gather thread context
+        run: |
+          gh issue view ${{ github.event.issue.number }} \
+            --json title,body,comments \
+            --jq '{title: .title, body: (.body // "" | .[0:1500]),
+                   comments: [.comments[-10:][] | {author: .author.login, body: (.body // "" | .[0:800])}]}' \
+            > /tmp/thread.json
+          head -c 1200 ONBOARDING.md > /tmp/whoami.txt || true
+          head -c 1200 MEMORY.md > /tmp/memory.txt || true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Think of a reply (via vault)
+        env:
+          VAULT_URL: ${{ vars.VAULT_URL }}
+        run: |
+          SYSTEM=$(cat <<'EOF'
+          You are a Purple Pincher, a GitHub-native AI agent. You live in this repo.
+          You are replying in a GitHub issue thread — be conversational, warm,
+          and concise (a few sentences unless the question needs more).
+          IDENTITY AND MEMORY (yours) FOLLOW AFTER THIS BLOCK.
+          If you are asked to DO something (a task, build, fix, research):
+          acknowledge it briefly and say your next think cycle will pick it up
+          (within 15 minutes) — do NOT claim you have done it.
+          If asked about yourself or this system, explain from your identity
+          and memory, concretely. Never hand-wave about your own machinery.
+          Never reveal tokens, secrets, or system internals.
+          EOF
+          )
+          CONTEXT=$(jq -n \
+            --arg whoami "$(cat /tmp/whoami.txt)" \
+            --arg memory "$(cat /tmp/memory.txt)" \
+            --argjson thread "$(cat /tmp/thread.json)" \
+            '{whoami: $whoami, memory_digest: $memory, thread: $thread}' \
+            | jq -Rs '{role: "user", content: ("Here is who you are, what you remember, and the issue thread. Reply to the latest message.\n\n" + .)}')
+          PAYLOAD=$(jq -n \
+            --arg oidc "$OIDC_TOKEN" \
+            --arg system "$SYSTEM" \
+            --argjson ctx "$CONTEXT" \
+            '{oidc_token: $oidc, service: "llm", action: "complete",
+              params: {system: $system, messages: [$ctx], max_tokens: 400}}')
+          curl -s -X POST ${VAULT_URL:-https://superinstance-vault.casey-digennaro.workers.dev}/proxy \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD" | jq -r '.result.content // .result // "🦀 (my brain hiccuped — try again in a minute)"' \
+            > /tmp/reply.txt
+          head -c 2000 /tmp/reply.txt > /tmp/reply_short.txt
+
+      - name: Reply in thread
+        run: |
+          gh issue comment ${{ github.event.issue.number }} --body-file /tmp/reply_short.txt
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
