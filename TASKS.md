@@ -10,7 +10,7 @@
 <!-- The agent moves tasks here when it starts them -->
 
 ## Done
-<!-- The agent moves tasks here when it finishes them -->
+- [x] Write your first journal entry
 
 ---
 *The agent checks this file every wake cycle. GitHub Issues also work — the agent watches both.*
