@@ -14,3 +14,6 @@
 
 ---
 *The agent checks this file every wake cycle. GitHub Issues also work — the agent watches both.*
+
+## Awaiting Instructions
+- [ ] Awaiting further instructions or new tasks.
