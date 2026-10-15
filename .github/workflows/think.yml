@@ -5,6 +5,18 @@
 #
 # The agent is autonomous. It doesn't block on human approval.
 # Dangerous actions are deferred, not blocked. The human reviews via git log.
+#
+# Maintainer notes (2026-10-15, see docs/architecture.md):
+# - OBSERVED: GitHub throttles this schedule heavily — despite the */15
+#   cron below, runs actually fire ~4-5 times/day. Every fired run
+#   succeeds; check the Actions tab before blaming the code.
+# - fetch-depth: 0 matters: agent.py reads `git log` as memory.
+# - id-token: write is what lets us mint the OIDC token for the vault.
+# - GH_TOKEN below is vestigial: agent.py never reads it (all GitHub
+#   traffic goes through the vault). react/telegram workflows DO use gh.
+# - The final step pushes to MAIN unconditionally — this is the only push
+#   path, and the real enforcement point for "no autonomous workflow
+#   edits" (guard 3 of 3; the others are in agent.py).
 
 name: think
 
@@ -59,6 +71,13 @@ jobs:
           VAULT_URL: ${{ vars.VAULT_URL }}
 
       - name: Commit everything (memory, scratch, work)
+        # The agent's actions only become real here: agent.py commits
+        # locally during the loop, but THIS step is what pushes. The
+        # `git reset .github/workflows/` is guard 3 of 3 against the
+        # agent rewriting its own nervous system (agent.py checks paths
+        # and resets before its own commits too). Commit identity is the
+        # agent's own ("zero"), distinct from the owner — unlike vault-
+        # posted issue comments, which appear as the owner.
         run: |
           git config user.name "zero"
           git config user.email "zero@purplepincher.org"

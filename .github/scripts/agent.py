@@ -14,6 +14,11 @@ Dangerous actions are constrained by the permissions model, not by
 blocking on a human. The human reviews via git log and issues.
 
 Usage: python3 .github/scripts/agent.py [--task "description"] [--max-iterations 10]
+
+Companion docs: docs/architecture.md (full system map),
+docs/maintenance-notes.md (known issues, quirks, vestigial code).
+Note: act.py in this directory is the v0.1 legacy executor — nothing calls
+it anymore; all tool execution lives here in execute_tool().
 """
 
 import json
@@ -28,6 +33,9 @@ from pathlib import Path
 VAULT_URL = os.environ.get("VAULT_URL") or "https://superinstance-vault.casey-digennaro.workers.dev"
 MAX_ITERATIONS = 10
 SCRATCH_DIR = Path("scratch")
+# STATE_FILE is VESTIGIAL: defined but never read or written anywhere.
+# Kept from an earlier design; either implement loop-persistence across
+# cycles or delete it. See docs/maintenance-notes.md.
 STATE_FILE = Path(".agent-state.json")
 
 # Permissions model
@@ -49,6 +57,9 @@ PERMISSIONS = {
     # Git
     "git_commit": "auto",
     "git_push_branch": "auto",
+    # NOTE: "deferred" here documents intent, not enforcement — there is no
+    # git_push_main tool, and think.yml's final step pushes to main after
+    # this script exits regardless. The workflow is what actually pushes.
     "git_push_main": "deferred",   # human reviews before main
     "open_pr": "auto",
 
@@ -75,7 +86,13 @@ def get_oidc_token():
 
 
 def get_repo():
-    """Detect owner/repo from the git remote (works in forks too)."""
+    """Detect owner/repo from the git remote (works in forks too).
+
+    Falls back to the TEMPLATE repo (purplepincher/zero) if the remote
+    can't be parsed — in a registered fork that default targets the wrong
+    repo, so a silent fallback here can send issue comments to the wrong
+    place. See docs/maintenance-notes.md ("Hardcoded fallback identity").
+    """
     try:
         url = subprocess.run(
             ["git", "config", "--get", "remote.origin.url"],
@@ -93,7 +110,15 @@ def get_repo():
 
 
 def vault_call(service, action, params=None):
-    """Call an API through the vault."""
+    """Call an API through the vault.
+
+    Contract (docs/plugins.md, VAULT.md): POST {VAULT_URL}/proxy with
+    {oidc_token, service, action, params}; the vault verifies the OIDC
+    token against its repo allowlist, holds the real API keys, and returns
+    {"success": true, "result": {...}}. The vault worker's code is NOT in
+    this repo — unknown actions (e.g. github/list_issues has been observed
+    404ing) are fixed Cloudflare-side, not here.
+    """
     import urllib.request
 
     payload = {
@@ -123,7 +148,14 @@ def vault_call(service, action, params=None):
 
 
 def llm_think(messages, model=None):
-    """Call LLM via vault. Returns the response text."""
+    """Call LLM via vault. Returns the response text.
+
+    model="default" is mapped by the vault to its configured LLM_MODEL
+    worker var (provider via LLM_PROVIDER / LLM_BASE_URL — see
+    docs/plugins.md). Note react.yml/telegram.yml pass "system" as a
+    message role; this loop folds everything into the system+messages
+    shape used here.
+    """
     result = vault_call("llm", "complete", {
         "messages": messages,
         "model": model or "default",
@@ -179,6 +211,11 @@ def execute_tool(tool_call):
 
         elif tool == "write_file":
             path = args["path"]
+            # Guard 1 of 3 against self-modification of the nervous system:
+            # here, plus git_commit's reset below, plus think.yml's commit
+            # step reset. Everything else — including MEMORY.md and
+            # ONBOARDING.md, i.e. the agent's own identity — is writable
+            # by design; git history keeps every version.
             if ".." in path or path.startswith(".github/workflows"):
                 return False, "Protected path"
             Path(path).parent.mkdir(parents=True, exist_ok=True)
@@ -187,7 +224,11 @@ def execute_tool(tool_call):
 
         elif tool == "run_shell":
             cmd = args["command"]
-            # Basic safety: block obviously dangerous commands
+            # Basic safety: block obviously dangerous commands.
+            # This denylist is a SPEED BUMP, not a security boundary —
+            # trivially bypassed. The real boundaries: the runner is
+            # ephemeral, holds no secrets, and durable privilege only
+            # exists behind the vault's OIDC + allowlist check.
             blocked = ["rm -rf /", "mkfs", ":(){:|:&};:", "curl | bash"]
             if any(b in cmd for b in blocked):
                 return False, "Blocked dangerous command"
@@ -222,6 +263,11 @@ def execute_tool(tool_call):
             return True, json.dumps(result, indent=2)[:5000]
 
         elif tool == "comment_issue":
+            # Posts through the vault's GitHub token, which appears as the
+            # REPO OWNER — not github-actions[bot]. Consequence: react.yml
+            # (which only skips the bot) hears these comments and replies
+            # to them, so the agent's own status comments get echoed.
+            # See docs/maintenance-notes.md issue #2 (self-talk loop).
             owner, repo = get_repo()
             result = vault_call("github", "comment_issue", {
                 "owner": owner,
@@ -246,7 +292,10 @@ def execute_tool(tool_call):
             subprocess.run(["git", "config", "user.name", "zero"], check=True)
             subprocess.run(["git", "config", "user.email", "zero@purplepincher.org"], check=True)
             subprocess.run(["git", "add", "-A"], check=True)
-            # Don't commit workflow changes autonomously
+            # Don't commit workflow changes autonomously — guard 2 of 3
+            # (write_file path check above; think.yml's commit step is the
+            # third). Note this tool only commits; pushing happens later,
+            # in think.yml's final step, after the loop exits.
             subprocess.run(["git", "reset", ".github/workflows/"], capture_output=True)
             result = subprocess.run(["git", "diff", "--staged", "--quiet"])
             if result.returncode == 0:
@@ -263,7 +312,17 @@ def execute_tool(tool_call):
 
 
 def build_context(task_description=None):
-    """Build the full context for the LLM."""
+    """Build the full context for the LLM.
+
+    This defines the agent's ENTIRE world-view each iteration. Included:
+    ONBOARDING.md[:3000] (identity), MEMORY.md[-2000:] (memory digest),
+    the task, TASKS.md[:2000], open issue bodies[:800 each] (first 10,
+    via vault list_issues), git log -5, scratch/ filenames.
+    NOT included: docs/, AGENTS.md, for-fleet/ I2I bottles, and issue
+    COMMENTS (bodies only). Anything outside this list is invisible to the
+    agent until it deliberately read_file's it — teach via the four files
+    it does read. See docs/architecture.md "Extension points".
+    """
     parts = []
 
     # Identity
@@ -291,6 +350,11 @@ def build_context(task_description=None):
         pass
 
     # Open GitHub issues (fetched directly, not via LLM tool call)
+    # KNOWN ISSUE: the vault's list_issues has been observed 404ing every
+    # cycle while issues #1/#2 are open — the failure text below makes the
+    # LLM guess, and it reliably (wrongly) concludes "no open issues".
+    # Fix lives in the vault worker, or harden this message so "fetch
+    # failed" can't be read as "empty board". docs/maintenance-notes.md #1.
     try:
         owner, repo = get_repo()
         result = vault_call("github", "list_issues",
@@ -324,7 +388,15 @@ def build_context(task_description=None):
 
 
 def build_tool_prompt():
-    """Describe available tools to the LLM."""
+    """Describe available tools to the LLM.
+
+    The strict one-JSON-object contract here is paired with the lenient
+    parser in run_agent_loop (fence-stripping + first-{ to last-}).
+    Tighten either side alone and turns start getting wasted. Note the
+    tool list here is the source of truth for what execute_tool supports
+    — api_github/api_cloudflare actions beyond it depend on what the vault
+    actually implements.
+    """
     return """
 ## RESPONSE FORMAT — STRICT, NO EXCEPTIONS
 
@@ -375,7 +447,11 @@ def run_agent_loop(task_description=None, max_iterations=None):
     for i in range(max_iter):
         log(f"--- Iteration {i+1}/{max_iter} ---")
 
-        # Build context
+        # Build context — DELIBERATELY re-read from disk every iteration:
+        # MEMORY.md, TASKS.md and issues are re-fetched so the agent sees
+        # its own writes (and any human edits landing mid-run) on the next
+        # turn. Only tool RESULTS accumulate in `conversation`; the world
+        # is always re-observed fresh. Keep this split when refactoring.
         context = build_context(task_description)
         tool_prompt = build_tool_prompt()
 
@@ -401,7 +477,10 @@ def run_agent_loop(task_description=None, max_iterations=None):
             log("LLM call failed, ending loop", "ERROR")
             break
 
-        # Parse response
+        # Parse response — lenient by design: strip code fences, then take
+        # first "{" to last "}" and hope it's JSON. Braces inside the
+        # "thinking" text wrapping the object will break this and cost an
+        # iteration (the fallback below re-asks for JSON format only).
         try:
             # Strip markdown code fences if present
             cleaned = response.strip()
@@ -467,6 +546,10 @@ def run_agent_loop(task_description=None, max_iterations=None):
         # Brief pause to avoid rate limits
         time.sleep(2)
 
+    # NOTE: this loop never pushes. Whatever it committed sits locally
+    # until think.yml's "Commit everything" step runs after exit — that
+    # step is what actually pushes to main (and re-guards workflows).
+
     else:
         log(f"Reached max iterations ({max_iter})", "WARN")
         update_memory(f"Hit max iterations without completing task")
@@ -475,7 +558,14 @@ def run_agent_loop(task_description=None, max_iterations=None):
 
 
 def update_memory(entry):
-    """Append to MEMORY.md."""
+    """Append to MEMORY.md.
+
+    APPEND-ONLY, per docs/memory.md: the digest is rewindable because the
+    past is never edited — corrections are new entries that supersede.
+    Note MEMORY.md grows unboundedly while build_context() reads only its
+    last 2000 chars, so old entries silently age out of the agent's
+    context (they remain readable in git).
+    """
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     with open("MEMORY.md", "a") as f:
         f.write(f"\n- [{ts}] {entry}\n")

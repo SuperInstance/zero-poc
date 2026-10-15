@@ -5,6 +5,22 @@
 # thinks via the vault, and replies IN the thread — a real dialogue.
 # Deep work still happens on the think heartbeat (<=15 min); this is
 # the conversational layer: manner as well as matter.
+#
+# Maintainer notes (2026-10-15, see docs/maintenance-notes.md):
+# - KNOWN ECHO LOOP: comments the AGENT posts via the vault appear as the
+#   repo OWNER (not github-actions[bot]), so they trigger this workflow
+#   and the bot replies to the agent's own status comments (~24s later).
+#   Observed as ~half of issue #1's 72 comments. Fix: filter the owner's
+#   agent-formatted comments here, or post vault comments as a bot.
+# - KNOWN FRAGILITY: `issue_comment` also fires on PR comments, where
+#   `gh issue comment <pr-number>` fails. Add
+#   `if: github.event.issue.pull_request == ''` to harden.
+# - The "do NOT claim you have done it" line in the system prompt below
+#   is load-bearing: it keeps this layer honest by deferring real work to
+#   the think heartbeat. Preserve it when editing.
+# - Truncations that shape replies: thread body 1500 chars, last 10
+#   comments x 800, ONBOARDING/MEMORY 1200 BYTES each (can cut mid-UTF8),
+#   reply capped at 2000 bytes (often mid-sentence — cosmetic bug).
 
 name: react
 
@@ -23,6 +39,9 @@ permissions:
 jobs:
   react:
     runs-on: ubuntu-latest
+    # Skips only the bot's OWN replies. Comments the agent posts through
+    # the vault come from the owner's token and are NOT filtered — that's
+    # the echo loop described in the header notes.
     if: github.actor != 'github-actions[bot]'
     steps:
       - name: Check out

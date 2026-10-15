@@ -23,6 +23,11 @@ GitHub Actions, is the agent. It is called a Purple Pincher zero.
   (see `docs/plugins.md`).
 - **Memory**: git itself (see `docs/memory.md`).
 
+The full component map, request flows, and file-by-file reference live in
+`docs/architecture.md`. Known issues, quirks, and vestigial code live in
+`docs/maintenance-notes.md`. If those two files can't answer your question,
+the docs have a bug — fix them.
+
 ## The one rule
 
 This repo holds NO secrets. API keys live in the vault, a Cloudflare Worker.

@@ -2,6 +2,22 @@
 #
 # Triggered by repository_dispatch from the Telegram bridge worker.
 # Logs the message, thinks via the vault (ZAI), and replies in Telegram.
+#
+# Maintainer notes (2026-10-15, see docs/architecture.md "telegram.yml"):
+# - Full path of a message: Telegram DM → bridge worker /webhook →
+#   repository_dispatch("telegram_message") here → MEMORY.md log commit →
+#   one vault LLM turn → bridge /send → Telegram reply. The agent never
+#   touches the Telegram API or bot token; the bridge holds them.
+# - Memory-first ordering is deliberate: the inbound message is committed
+#   to MEMORY.md BEFORE replying, so a crash during the LLM call can't
+#   lose it.
+# - KNOWN GAP: instructions arriving by Telegram only become WORK if a
+#   later think cycle notices them in the memory digest (last 2000
+#   chars). They are not routed to TASKS.md or issues. Old Telegram
+#   entries age out of context — see docs/maintenance-notes.md.
+# - The bridge URL fallback below is hardcoded; the override is the repo
+#   variable TELEGRAM_BRIDGE_URL. Moving the bridge means updating both
+#   (plus VAULT.md-style docs).
 
 name: telegram
 
@@ -32,6 +48,9 @@ jobs:
           echo "OIDC_TOKEN=${OIDC_TOKEN}" >> $GITHUB_ENV
 
       - name: Log Telegram event
+        # Memory-first: persist the inbound message before attempting any
+        # reply, so LLM/bridge failures can't lose it. Commits and pushes
+        # immediately (unlike think.yml, which batches at cycle end).
         run: |
           echo "Telegram message from ${{ github.event.client_payload.username }}"
           echo "Chat ID: ${{ github.event.client_payload.chat_id }}"

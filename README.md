@@ -66,14 +66,18 @@ See `docs/clones.md` for the shell model.
 
 ```
 .github/workflows/   think.yml, react.yml, telegram.yml
-.github/scripts/      agent.py (the brain), act.py (the hands)
-docs/                 plugins.md, i2i.md, memory.md, clones.md, tripartite.md
+.github/scripts/      agent.py (the brain), act.py (legacy v0.1 executor, unused)
+docs/                 architecture.md, maintenance-notes.md, plugins.md, i2i.md, memory.md, clones.md, tripartite.md, registration.md
 AGENTS.md             operator's manual
 ONBOARDING.md         first-boot checklist
 TASKS.md              the task board
 MEMORY.md             long-term memory (committed, rewindable)
 VAULT.md              how the vault works (it holds no secrets)
 ```
+
+New here? `docs/architecture.md` is the full system map (start there);
+`docs/maintenance-notes.md` collects known issues, quirks, and vestigial
+code for anyone doing maintenance.
 
 ## License
 

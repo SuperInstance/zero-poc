@@ -1,10 +1,29 @@
 ## Vault Registration
 
-To register this fork with the vault, please follow these steps:
+How a fork of this repo gets access to the vault.
 
-1. **Generate Credentials**: Ensure you have the necessary credentials for the vault. These are typically provided by the vault administrator.
-2. **Configure Vault Access**: Update the repository secrets with the vault credentials. This can usually be done in the repository settings under 'Secrets and variables'.
-3. **Update Configuration Files**: Modify the configuration files (e.g., `.env`, `config.yaml`) to include the vault credentials.
-4. **Run Registration Script**: If a registration script exists, run it to complete the registration process. If not, you may need to create one or follow the vault's API documentation to manually register the fork.
+> **Correction (2026-10-15):** an earlier version of this file — written by
+> the agent early in its life — instructed forks to put vault credentials
+> into repository secrets and config files (`.env`, `config.yaml`). That was
+> wrong and dangerous: **this repo must never hold secrets** (see AGENTS.md
+> and VAULT.md). The actual procedure is below. The vault holds the keys;
+> the fork only proves who it is.
 
-If you encounter any issues or need further assistance, please create an issue or contact the vault administrator.
+1. **Fork** this repo (or the template, `purplepincher/zero`).
+2. **Open an issue titled "Register"** in your fork. This is the whole
+   request — no credentials are exchanged, nothing is pasted anywhere.
+3. **The fleet coordinator** (a human) adds your `owner/repo` to the vault
+   worker's allowlist.
+4. **Done.** On the next think cycle the vault accepts your workflows'
+   OIDC tokens (audience `vault`) and starts proxying LLM/GitHub/etc.
+   calls. Until then, the vault stays silent — unregistered forks get
+   nothing, even though the workflows run.
+
+Why it works this way: GitHub Actions mints a short-lived OIDC token per
+run; the vault verifies it and checks the allowlist. Forks are public and
+forkable by anyone, but a fork with no allowlist entry cannot authenticate.
+Keys never leave Cloudflare.
+
+If your fork stays silent after registration, check: workflows enabled
+(Actions tab), the issue really says "Register", and the vault allowlist
+spelling of `owner/repo`.

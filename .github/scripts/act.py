@@ -1,14 +1,21 @@
 #!/usr/bin/env python3
 """
-act.py — Execute the agent's decisions.
+act.py — Execute the agent's decisions. [LEGACY — v0.1, NOT WIRED UP]
 
 Reads the LLM's JSON decision and performs the actions:
 - comment_issue: post a comment on a GitHub issue
 - update_file: write content to a file in the repo
 - update_memory: append an entry to MEMORY.md
 
-v0.1: basic actions. Future versions add code writing, PR creation,
-multi-step tool use, and fleet bottle messaging.
+STATUS (2026-10-15): nothing invokes this script anymore. It is the v0.1
+single-decision executor (one LLM turn → one decision.json → this file),
+from before agent.py grew its own ReAct loop. agent.py's execute_tool()
+absorbed all of these duties and more (it also goes through the vault for
+GitHub calls, while this file uses the gh CLI + GITHUB_TOKEN directly).
+README.md still describes it as "the hands" — that's historical.
+
+Kept as reference. Do NOT wire new behavior into this file; extend
+agent.py instead. See docs/architecture.md and docs/maintenance-notes.md.
 """
 import json
 import os
