@@ -1,0 +1,5 @@
+# Python artifacts — never commit these; think.yml's `git add -A` would
+# otherwise sweep them into every heartbeat commit once tests exist.
+__pycache__/
+*.pyc
+.pytest_cache/

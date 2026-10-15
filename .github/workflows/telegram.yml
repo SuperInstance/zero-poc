@@ -11,10 +11,12 @@
 # - Memory-first ordering is deliberate: the inbound message is committed
 #   to MEMORY.md BEFORE replying, so a crash during the LLM call can't
 #   lose it.
-# - KNOWN GAP: instructions arriving by Telegram only become WORK if a
-#   later think cycle notices them in the memory digest (last 2000
-#   chars). They are not routed to TASKS.md or issues. Old Telegram
-#   entries age out of context — see docs/maintenance-notes.md.
+# - TASK ROUTING (v0.3): inbound messages are ALSO appended to TASKS.md
+#   under "## Open" as `- [ ] (telegram <user>) <text[:200]>`, because
+#   MEMORY.md entries age out of the think loop's 2000-char context
+#   window while TASKS.md is read fresh every cycle. The think LLM triages
+#   them like any other task. (Previously: MEMORY-only logging, which let
+#   Telegram instructions silently evaporate — docs/maintenance-notes.md.)
 # - The bridge URL fallback below is hardcoded; the override is the repo
 #   variable TELEGRAM_BRIDGE_URL. Moving the bridge means updating both
 #   (plus VAULT.md-style docs).
@@ -40,28 +42,59 @@ jobs:
           fetch-depth: 0
 
       - name: Get OIDC token for vault
+        # Step output (not $GITHUB_ENV) so the token reaches only the
+        # "Think via vault" step below.
+        id: oidc
         run: |
           OIDC_TOKEN=$(curl -s \
             -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
             "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=vault" \
             | jq -r '.value')
-          echo "OIDC_TOKEN=${OIDC_TOKEN}" >> $GITHUB_ENV
+          echo "token=${OIDC_TOKEN}" >> "$GITHUB_OUTPUT"
 
       - name: Log Telegram event
         # Memory-first: persist the inbound message before attempting any
         # reply, so LLM/bridge failures can't lose it. Commits and pushes
         # immediately (unlike think.yml, which batches at cycle end).
+        # v0.3: also routes the message onto TASKS.md's "## Open" board —
+        # see the TASK ROUTING note in the header. ALL client_payload
+        # values reach the script through the environment (TG_TEXT,
+        # TG_USER, TG_CHAT): ${VAR} expansion is never re-parsed as shell,
+        # while ${{ ... }} interpolation into run: text WOULD be an
+        # injection point (the payload originates outside GitHub).
+        env:
+          TG_TEXT: ${{ github.event.client_payload.text }}
+          TG_USER: ${{ github.event.client_payload.username }}
+          TG_CHAT: ${{ github.event.client_payload.chat_id }}
         run: |
-          echo "Telegram message from ${{ github.event.client_payload.username }}"
-          echo "Chat ID: ${{ github.event.client_payload.chat_id }}"
+          echo "Telegram message from ${TG_USER}"
+          echo "Chat ID: ${TG_CHAT}"
           git config user.name "zero"
           git config user.email "zero@purplepincher.org"
-          echo "- Telegram from ${{ github.event.client_payload.username }} at $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> MEMORY.md
-          git add MEMORY.md
-          git diff --staged --quiet || (git commit -m "telegram: message from ${{ github.event.client_payload.username }}" && git push)
+          echo "- Telegram from ${TG_USER} at $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> MEMORY.md
+          python3 - <<'PY'
+          import os, pathlib
+          text = " ".join(os.environ.get("TG_TEXT", "").split())[:200]
+          user = os.environ.get("TG_USER", "unknown")
+          line = f"- [ ] (telegram {user}) {text}"
+          p = pathlib.Path("TASKS.md")
+          if p.exists():
+              content = p.read_text()
+              if "## Open" in content:
+                  head, _, tail = content.partition("## Open")
+                  content = head + "## Open\n" + line + "\n" + tail.lstrip("\n").removeprefix("<!-- Add tasks here -->").lstrip("\n")
+              else:
+                  content = content.rstrip("\n") + f"\n\n## Open\n{line}\n"
+          else:
+              content = f"# TASKS.md — Task Board\n\n## Open\n{line}\n"
+          p.write_text(content)
+          PY
+          git add MEMORY.md TASKS.md
+          git diff --staged --quiet || (git commit -m "telegram: message from ${TG_USER}" && git push)
 
       - name: Think via vault
         env:
+          OIDC_TOKEN: ${{ steps.oidc.outputs.token }}
           TG_TEXT: ${{ github.event.client_payload.text }}
           TG_USER: ${{ github.event.client_payload.username }}
           VAULT_URL: ${{ vars.VAULT_URL }}

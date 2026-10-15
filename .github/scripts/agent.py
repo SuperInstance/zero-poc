@@ -19,8 +19,18 @@ Companion docs: docs/architecture.md (full system map),
 docs/maintenance-notes.md (known issues, quirks, vestigial code).
 Note: act.py in this directory is the v0.1 legacy executor — nothing calls
 it anymore; all tool execution lives here in execute_tool().
+
+v0.3 (2026-10-15, owner maintenance): issue comments/creation prefer the
+gh CLI (posts as github-actions[bot], which react.yml filters — breaking
+the echo loop) with the vault as fallback; open-issue listing falls back
+to gh when the vault 404s; for-fleet/ bottles enter the context; loop
+outcome persists to STATE_FILE; LLM parsing extracted to
+parse_llm_decision() for testability; run_tests() can use stdlib unittest
+when pytest is absent; LOCAL_LLM_URL enables hermit-crab mode (think via
+a local OpenAI-compatible server, no vault).
 """
 
+import importlib.util
 import json
 import os
 import subprocess
@@ -31,11 +41,22 @@ from pathlib import Path
 
 # Configuration
 VAULT_URL = os.environ.get("VAULT_URL") or "https://superinstance-vault.casey-digennaro.workers.dev"
+
+# Local-brain mode — the hermit-crab path (docs/clones.md): point
+# LOCAL_LLM_URL at any OpenAI-compatible server (ollama, llama.cpp server,
+# vLLM, LM Studio) and this loop thinks locally: no vault, no keys, no
+# registration — the shell wears its own brain. Example:
+#   LOCAL_LLM_URL=http://localhost:11434/v1 LOCAL_LLM_MODEL=qwen2.5-coder:7b \
+#     python3 .github/scripts/agent.py --task "fix the README"
+LOCAL_LLM_URL = os.environ.get("LOCAL_LLM_URL", "")
+LOCAL_LLM_MODEL = os.environ.get("LOCAL_LLM_MODEL", "local")
+
 MAX_ITERATIONS = 10
 SCRATCH_DIR = Path("scratch")
-# STATE_FILE is VESTIGIAL: defined but never read or written anywhere.
-# Kept from an earlier design; either implement loop-persistence across
-# cycles or delete it. See docs/maintenance-notes.md.
+# STATE_FILE (implemented v0.3) persists loop-to-loop continuity: when the
+# last cycle started, how it ended (completed / max_iterations / llm_error),
+# how many iterations it used. It is committed with everything else, so the
+# git log doubles as the agent's vital-signs record.
 STATE_FILE = Path(".agent-state.json")
 
 # Permissions model
@@ -86,13 +107,16 @@ def get_oidc_token():
 
 
 def get_repo():
-    """Detect owner/repo from the git remote (works in forks too).
-
-    Falls back to the TEMPLATE repo (purplepincher/zero) if the remote
-    can't be parsed — in a registered fork that default targets the wrong
-    repo, so a silent fallback here can send issue comments to the wrong
-    place. See docs/maintenance-notes.md ("Hardcoded fallback identity").
+    """Detect owner/repo: GITHUB_REPOSITORY env first (always exact in
+    Actions, even if the remote URL is rewritten), then the git remote
+    (works in local clones), then a loud-warned fallback to the TEMPLATE
+    repo (purplepincher/zero). That default targets the wrong repo in a
+    registered fork, so warn rather than fail silently.
+    See docs/maintenance-notes.md ("Hardcoded fallback identity").
     """
+    env_repo = os.environ.get("GITHUB_REPOSITORY", "")
+    if "/" in env_repo:
+        return tuple(env_repo.split("/", 1))
     try:
         url = subprocess.run(
             ["git", "config", "--get", "remote.origin.url"],
@@ -106,6 +130,8 @@ def get_repo():
             return owner, repo
     except Exception:
         pass
+    log("Could not detect owner/repo from env or git remote; "
+        "falling back to template default purplepincher/zero", "WARN")
     return "purplepincher", "zero"
 
 
@@ -148,14 +174,20 @@ def vault_call(service, action, params=None):
 
 
 def llm_think(messages, model=None):
-    """Call LLM via vault. Returns the response text.
+    """Call the LLM. Returns the response text, or None on failure.
 
-    model="default" is mapped by the vault to its configured LLM_MODEL
-    worker var (provider via LLM_PROVIDER / LLM_BASE_URL — see
-    docs/plugins.md). Note react.yml/telegram.yml pass "system" as a
-    message role; this loop folds everything into the system+messages
-    shape used here.
+    Two paths:
+    - LOCAL_LLM_URL set (hermit-crab mode): POST directly to a local
+      OpenAI-compatible /chat/completions endpoint — no vault, no secrets.
+      See docs/clones.md ("the crab walks around in it... never reports
+      back up the chain").
+    - Otherwise: via the vault. model="default" is mapped by the vault to
+      its configured LLM_MODEL worker var (provider via LLM_PROVIDER /
+      LLM_BASE_URL — see docs/plugins.md).
     """
+    if LOCAL_LLM_URL:
+        return llm_think_local(messages, model)
+
     result = vault_call("llm", "complete", {
         "messages": messages,
         "model": model or "default",
@@ -170,6 +202,40 @@ def llm_think(messages, model=None):
     if isinstance(r, dict):
         return r.get("content") or r.get("text") or json.dumps(r)
     return str(r)
+
+
+def llm_think_local(messages, model=None):
+    """One OpenAI-compatible chat completion against LOCAL_LLM_URL.
+
+    Longer timeout than the vault path — small local models can be slow,
+    and there is no shared rate limit to be polite to.
+    """
+    import urllib.request
+
+    payload = {
+        "model": model if (model and model != "default") else LOCAL_LLM_MODEL,
+        "messages": messages,
+        "stream": False,
+    }
+    req = urllib.request.Request(
+        f"{LOCAL_LLM_URL.rstrip('/')}/chat/completions",
+        data=json.dumps(payload).encode(),
+        headers={
+            "Content-Type": "application/json",
+            # Same UA note as vault_call: identifies the agent, avoids
+            # generic-client filtering on some proxies.
+            "User-Agent": "purplepincher-zero/1.0 (+https://github.com/purplepincher/zero)",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            data = json.loads(resp.read().decode())
+        content = data["choices"][0]["message"]["content"]
+        return content or None
+    except Exception as e:
+        log(f"Local LLM call failed ({LOCAL_LLM_URL}): {e}", "ERROR")
+        return None
 
 
 def check_permission(tool_name):
@@ -239,11 +305,17 @@ def execute_tool(tool_call):
             return True, f"Exit {result.returncode}:\n{output[:5000]}"
 
         elif tool == "run_tests":
-            # Convention: run pytest if tests exist, npm test if package.json
+            # Convention: pytest if tests exist (stdlib unittest fallback —
+            # the runner's setup-python may not ship pytest), npm test if
+            # package.json exists.
             if Path("tests").exists():
+                if importlib.util.find_spec("pytest"):
+                    cmd = ["python3", "-m", "pytest", "tests/", "-x", "-q"]
+                else:
+                    cmd = ["python3", "-m", "unittest", "discover",
+                           "-s", ".", "-p", "test_*.py", "-v"]
                 result = subprocess.run(
-                    ["python3", "-m", "pytest", "tests/", "-x", "-q"],
-                    capture_output=True, text=True, timeout=300
+                    cmd, capture_output=True, text=True, timeout=300
                 )
             elif Path("package.json").exists():
                 result = subprocess.run(
@@ -263,11 +335,28 @@ def execute_tool(tool_call):
             return True, json.dumps(result, indent=2)[:5000]
 
         elif tool == "comment_issue":
-            # Posts through the vault's GitHub token, which appears as the
-            # REPO OWNER — not github-actions[bot]. Consequence: react.yml
-            # (which only skips the bot) hears these comments and replies
-            # to them, so the agent's own status comments get echoed.
-            # See docs/maintenance-notes.md issue #2 (self-talk loop).
+            # Identity is load-bearing (v0.3). Posting via gh + the job's
+            # GITHUB_TOKEN makes the comment come from github-actions[bot],
+            # which react.yml filters out — this breaks the echo loop where
+            # react LLM-replied to the agent's own status comments (vault
+            # comments appear as the repo OWNER, which react does NOT
+            # filter; docs/maintenance-notes.md #2). gh first, vault as
+            # fallback (also covers non-Actions environments).
+            if os.environ.get("GH_TOKEN"):
+                try:
+                    proc = subprocess.run(
+                        ["gh", "issue", "comment", str(args["issue"]),
+                         "--body", args["body"]],
+                        capture_output=True, text=True, timeout=60
+                    )
+                except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+                    # gh missing (local shells) or hung — fall through to vault
+                    log(f"gh unavailable ({e}); trying vault", "WARN")
+                    proc = None
+                if proc is not None:
+                    if proc.returncode == 0:
+                        return True, "Comment posted (as github-actions[bot])"
+                    log(f"gh comment failed ({proc.stderr.strip()[:200]}); trying vault", "WARN")
             owner, repo = get_repo()
             result = vault_call("github", "comment_issue", {
                 "owner": owner,
@@ -275,9 +364,30 @@ def execute_tool(tool_call):
                 "issue_number": args["issue"],
                 "body": args["body"],
             })
-            return True, "Comment posted"
+            # vault_call returns error dicts, never raises — report honestly
+            # so the LLM (and the memory entry it writes next) can't believe
+            # a reply happened when it didn't
+            if "error" in result or result.get("success") is False:
+                return False, f"Vault comment failed: {json.dumps(result)[:300]}"
+            return True, "Comment posted (via vault, appears as owner)"
 
         elif tool == "create_issue":
+            # gh-first for the same identity reason as comment_issue above.
+            if os.environ.get("GH_TOKEN"):
+                try:
+                    proc = subprocess.run(
+                        ["gh", "issue", "create",
+                         "--title", args["title"],
+                         "--body", args.get("body", "")],
+                        capture_output=True, text=True, timeout=60
+                    )
+                except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+                    log(f"gh unavailable ({e}); trying vault", "WARN")
+                    proc = None
+                if proc is not None:
+                    if proc.returncode == 0:
+                        return True, f"Issue created: {proc.stdout.strip()[:200]}"
+                    log(f"gh issue create failed ({proc.stderr.strip()[:200]}); trying vault", "WARN")
             owner, repo = get_repo()
             result = vault_call("github", "create_issue", {
                 "owner": owner,
@@ -285,6 +395,8 @@ def execute_tool(tool_call):
                 "title": args["title"],
                 "body": args.get("body", ""),
             })
+            if "error" in result or result.get("success") is False:
+                return False, f"Vault issue creation failed: {json.dumps(result)[:300]}"
             return True, f"Issue created: {json.dumps(result)[:200]}"
 
         elif tool == "git_commit":
@@ -311,17 +423,56 @@ def execute_tool(tool_call):
         return False, f"Error: {e}"
 
 
+def fetch_open_issues():
+    """Open issues for this repo: vault first, gh CLI fallback.
+
+    The vault's list_issues action was observed 404ing for over a week
+    while issues #1/#2 were open (docs/maintenance-notes.md #1) — the
+    agent concluded "no open issues" every cycle and never saw its board.
+    The gh fallback (GH_TOKEN is provided by think.yml) keeps a vault bug
+    from blinding the agent. Returns (issues_or_None, source_name).
+    """
+    owner, repo = get_repo()
+    result = vault_call("github", "list_issues",
+                        {"owner": owner, "repo": repo, "state": "open"})
+    issues = result.get("result", result) if isinstance(result, dict) else result
+    if isinstance(issues, list):
+        return issues, "vault"
+
+    if os.environ.get("GH_TOKEN"):
+        try:
+            proc = subprocess.run(
+                ["gh", "issue", "list", "--state", "open", "--limit", "10",
+                 "--json", "number,title,body"],
+                capture_output=True, text=True, timeout=60
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+            log(f"gh unavailable ({e})", "WARN")
+            proc = None
+        if proc is not None:
+            if proc.returncode == 0:
+                try:
+                    issues = json.loads(proc.stdout)
+                    if isinstance(issues, list):
+                        return issues, "gh"
+                except ValueError:
+                    pass
+            log(f"gh issue list failed: {proc.stderr.strip()[:200]}", "WARN")
+    return None, "failed"
+
+
 def build_context(task_description=None):
     """Build the full context for the LLM.
 
     This defines the agent's ENTIRE world-view each iteration. Included:
     ONBOARDING.md[:3000] (identity), MEMORY.md[-2000:] (memory digest),
     the task, TASKS.md[:2000], open issue bodies[:800 each] (first 10,
-    via vault list_issues), git log -5, scratch/ filenames.
-    NOT included: docs/, AGENTS.md, for-fleet/ I2I bottles, and issue
-    COMMENTS (bodies only). Anything outside this list is invisible to the
-    agent until it deliberately read_file's it — teach via the four files
-    it does read. See docs/architecture.md "Extension points".
+    vault-first with gh fallback), git log -5, scratch/ filenames, and
+    (since v0.3) for-fleet/ bottle headlines.
+    NOT included: docs/, AGENTS.md, and issue COMMENTS (bodies only).
+    Anything outside this list is invisible to the agent until it
+    deliberately read_file's it — teach via the files it does read.
+    See docs/architecture.md "Extension points".
     """
     parts = []
 
@@ -349,22 +500,28 @@ def build_context(task_description=None):
     except:
         pass
 
-    # Open GitHub issues (fetched directly, not via LLM tool call)
-    # KNOWN ISSUE: the vault's list_issues has been observed 404ing every
-    # cycle while issues #1/#2 are open — the failure text below makes the
-    # LLM guess, and it reliably (wrongly) concludes "no open issues".
-    # Fix lives in the vault worker, or harden this message so "fetch
-    # failed" can't be read as "empty board". docs/maintenance-notes.md #1.
+    # Open GitHub issues (fetched directly, not via LLM tool call).
+    # Vault-first with gh fallback — see fetch_open_issues. On total
+    # failure the wording is explicit so the LLM cannot read "fetch
+    # failed" as "board is empty" (it did, daily, before v0.3).
     try:
-        owner, repo = get_repo()
-        result = vault_call("github", "list_issues",
-                            {"owner": owner, "repo": repo, "state": "open"})
-        issues = result.get("result", result) if isinstance(result, dict) else result
-        if isinstance(issues, list) and issues:
-            lines = []
-            for i in issues[:10]:
-                lines.append(f"#{i.get('number')}: {i.get('title')}\n{(i.get('body') or '')[:800]}")
-            parts.append("## Open Issues\n" + "\n---\n".join(lines))
+        issues, source = fetch_open_issues()
+        if issues is not None:
+            # fetch succeeded — an EMPTY list is a real, trustworthy
+            # answer (don't conflate [] with failure; that inversion is
+            # what made the agent doubt its board in the first place)
+            if issues:
+                lines = []
+                for i in issues[:10]:
+                    lines.append(f"#{i.get('number')}: {i.get('title')}\n{(i.get('body') or '')[:800]}")
+                parts.append(f"## Open Issues (via {source})\n" + "\n---\n".join(lines))
+            else:
+                parts.append(f"## Open Issues (via {source})\n(none open — the board is empty)")
+        else:
+            parts.append(
+                "## Open Issues\n"
+                "(FETCH FAILED — this does NOT mean the board is empty. "
+                "Check with run_shell: gh issue list --state open)")
     except Exception as e:
         parts.append(f"## Open Issues\n(could not fetch: {e})")
 
@@ -383,6 +540,19 @@ def build_context(task_description=None):
         files = list(SCRATCH_DIR.glob("*"))
         if files:
             parts.append(f"## Scratch Files\n{', '.join(f.name for f in files[:20])}")
+
+    # Fleet bottles (docs/i2i.md): broadcast messages other agents dropped
+    # into for-fleet/. Surfaced in v0.3 — before this, bottles were
+    # invisible to the think loop unless the LLM thought to look.
+    fleet_dir = Path("for-fleet")
+    if fleet_dir.is_dir():
+        bottles = sorted(fleet_dir.glob("*.md"))[:5]
+        if bottles:
+            lines = []
+            for b in bottles:
+                first = b.read_text(errors="ignore").strip().splitlines()
+                lines.append(f"- {b.name}: {first[0] if first else '(empty)'}")
+            parts.append("## Fleet Bottles\n" + "\n".join(lines))
 
     return "\n\n".join(parts)
 
@@ -432,6 +602,34 @@ REMEMBER: your entire response must be ONE JSON object and nothing else.
 """.strip()
 
 
+def parse_llm_decision(response):
+    """Parse the LLM's response into a decision dict; None if unparseable.
+
+    Lenient by design (paired with the strict one-JSON-object prompt in
+    build_tool_prompt): strips markdown code fences, then takes the first
+    "{" to the last "}" and tries json.loads. Braces in surrounding
+    "thinking" prose can still defeat this — the caller re-asks for JSON
+    and that iteration is spent. Extracted to a function in v0.3 so it can
+    be unit-tested (tests/test_agent.py).
+    """
+    cleaned = response.strip()
+    if cleaned.startswith("```"):
+        cleaned = cleaned.split("\n", 1)[1] if "\n" in cleaned else cleaned[3:]
+        if cleaned.rstrip().endswith("```"):
+            cleaned = cleaned.rstrip()[:-3]
+        cleaned = cleaned.strip()
+        if cleaned.startswith("json"):
+            cleaned = cleaned[4:].strip()
+    start = cleaned.find("{")
+    end = cleaned.rfind("}") + 1
+    if start >= 0 and end > start:
+        try:
+            return json.loads(cleaned[start:end])
+        except ValueError:
+            return None
+    return None
+
+
 def run_agent_loop(task_description=None, max_iterations=None):
     """Main ReAct loop."""
     max_iter = max_iterations or MAX_ITERATIONS
@@ -442,9 +640,20 @@ def run_agent_loop(task_description=None, max_iterations=None):
     # Ensure scratch directory exists
     SCRATCH_DIR.mkdir(exist_ok=True)
 
+    # Cross-cycle continuity: what happened last time (STATE_FILE)
+    prev = load_state()
+    if prev:
+        log(f"Previous cycle: {prev.get('started_utc', '?')} → "
+            f"{prev.get('outcome', '?')}")
+
+    started_utc = datetime.now(timezone.utc).isoformat()
+    outcome = "unknown"
+    iterations_used = 0
+
     conversation = []
 
     for i in range(max_iter):
+        iterations_used = i + 1
         log(f"--- Iteration {i+1}/{max_iter} ---")
 
         # Build context — DELIBERATELY re-read from disk every iteration:
@@ -475,30 +684,12 @@ def run_agent_loop(task_description=None, max_iterations=None):
         response = llm_think(messages)
         if not response:
             log("LLM call failed, ending loop", "ERROR")
+            outcome = "llm_error"
             break
 
-        # Parse response — lenient by design: strip code fences, then take
-        # first "{" to last "}" and hope it's JSON. Braces inside the
-        # "thinking" text wrapping the object will break this and cost an
-        # iteration (the fallback below re-asks for JSON format only).
-        try:
-            # Strip markdown code fences if present
-            cleaned = response.strip()
-            if cleaned.startswith("```"):
-                cleaned = cleaned.split("\n", 1)[1] if "\n" in cleaned else cleaned[3:]
-                if cleaned.rstrip().endswith("```"):
-                    cleaned = cleaned.rstrip()[:-3]
-                cleaned = cleaned.strip()
-                if cleaned.startswith("json"):
-                    cleaned = cleaned[4:].strip()
-            # Find the largest balanced JSON object
-            start = cleaned.find("{")
-            end = cleaned.rfind("}") + 1
-            if start >= 0 and end > start:
-                decision = json.loads(cleaned[start:end])
-            else:
-                raise ValueError("No JSON found")
-        except:
+        # Parse response (lenient parser — see parse_llm_decision)
+        decision = parse_llm_decision(response)
+        if decision is None:
             log(f"Could not parse LLM response as JSON, treating as thinking", "WARN")
             log(f"Response: {response[:500]}")
             conversation.append({"role": "assistant", "content": response})
@@ -513,6 +704,7 @@ def run_agent_loop(task_description=None, max_iterations=None):
         if decision.get("done"):
             summary = decision.get("summary", "Task complete")
             log(f"Agent reports done: {summary}")
+            outcome = f"completed: {summary[:200]}"
             # Update memory
             update_memory(f"Completed: {summary}")
             break
@@ -552,9 +744,35 @@ def run_agent_loop(task_description=None, max_iterations=None):
 
     else:
         log(f"Reached max iterations ({max_iter})", "WARN")
+        outcome = "max_iterations"
         update_memory(f"Hit max iterations without completing task")
 
+    # Every non-crash exit path (done / llm_error / max_iterations) flows
+    # through here — one place to persist the cycle's vital signs.
+    save_state({
+        "schema": 1,
+        "started_utc": started_utc,
+        "task": (task_description or "")[:500],
+        "outcome": outcome,
+        "iterations_used": iterations_used,
+    })
     log("Agent loop complete")
+
+
+def load_state():
+    """Read STATE_FILE if present; {} otherwise. Never raises."""
+    try:
+        return json.loads(STATE_FILE.read_text())
+    except Exception:
+        return {}
+
+
+def save_state(state):
+    """Persist loop continuity to STATE_FILE (committed with the cycle)."""
+    try:
+        STATE_FILE.write_text(json.dumps(state, indent=2) + "\n")
+    except Exception as e:
+        log(f"Could not write state file: {e}", "WARN")
 
 
 def update_memory(entry):

@@ -12,8 +12,10 @@
 #   succeeds; check the Actions tab before blaming the code.
 # - fetch-depth: 0 matters: agent.py reads `git log` as memory.
 # - id-token: write is what lets us mint the OIDC token for the vault.
-# - GH_TOKEN below is vestigial: agent.py never reads it (all GitHub
-#   traffic goes through the vault). react/telegram workflows DO use gh.
+# - GH_TOKEN is load-bearing since v0.3: agent.py uses gh with it to
+#   list issues (fallback when the vault's list_issues 404s) and to post
+#   comments as github-actions[bot] (the react echo-loop fix). The vault
+#   still handles everything privileged.
 # - The final step pushes to MAIN unconditionally — this is the only push
 #   path, and the real enforcement point for "no autonomous workflow
 #   edits" (guard 3 of 3; the others are in agent.py).
@@ -56,17 +58,21 @@ jobs:
           python-version: '3.11'
 
       - name: Get OIDC token for vault
+        # v0.3: token flows via a step output instead of $GITHUB_ENV, so it
+        # is scoped to the steps that actually need it rather than
+        # persisting in every later step's environment.
+        id: oidc
         run: |
           OIDC_TOKEN=$(curl -s \
             -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
             "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=vault" \
             | jq -r '.value')
-          echo "OIDC_TOKEN=${OIDC_TOKEN}" >> $GITHUB_ENV
+          echo "token=${OIDC_TOKEN}" >> "$GITHUB_OUTPUT"
 
       - name: Run agent loop
         run: python3 .github/scripts/agent.py --task "${{ inputs.task }}" --max-iterations ${{ inputs.max_iterations || '10' }}
         env:
-          OIDC_TOKEN: ${{ env.OIDC_TOKEN }}
+          OIDC_TOKEN: ${{ steps.oidc.outputs.token }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VAULT_URL: ${{ vars.VAULT_URL }}
 

@@ -7,20 +7,20 @@
 # the conversational layer: manner as well as matter.
 #
 # Maintainer notes (2026-10-15, see docs/maintenance-notes.md):
-# - KNOWN ECHO LOOP: comments the AGENT posts via the vault appear as the
-#   repo OWNER (not github-actions[bot]), so they trigger this workflow
-#   and the bot replies to the agent's own status comments (~24s later).
-#   Observed as ~half of issue #1's 72 comments. Fix: filter the owner's
-#   agent-formatted comments here, or post vault comments as a bot.
-# - KNOWN FRAGILITY: `issue_comment` also fires on PR comments, where
-#   `gh issue comment <pr-number>` fails. Add
-#   `if: github.event.issue.pull_request == ''` to harden.
+# - ECHO LOOP FIXED agent-side (v0.3): agent.py now posts its comments via
+#   gh as github-actions[bot], which the `if:` below filters. The vault
+#   path (posts as the repo OWNER) remains only as a fallback — if it is
+#   ever used, the echo returns (~half of issue #1's 72 comments were
+#   echoes).
+# - PR-comment guard (v0.3): `issue_comment` also fires on PR comments,
+#   where `gh issue comment <pr-number>` would fail — now skipped below.
 # - The "do NOT claim you have done it" line in the system prompt below
 #   is load-bearing: it keeps this layer honest by deferring real work to
 #   the think heartbeat. Preserve it when editing.
 # - Truncations that shape replies: thread body 1500 chars, last 10
-#   comments x 800, ONBOARDING/MEMORY 1200 BYTES each (can cut mid-UTF8),
-#   reply capped at 2000 bytes (often mid-sentence — cosmetic bug).
+#   comments x 800, ONBOARDING/MEMORY 1200 bytes each, reply capped at
+#   2000 bytes. Byte caps are UTF-8-boundary-safe since v0.3 (python
+#   trims instead of head -c, which could split a multibyte character).
 
 name: react
 
@@ -39,10 +39,11 @@ permissions:
 jobs:
   react:
     runs-on: ubuntu-latest
-    # Skips only the bot's OWN replies. Comments the agent posts through
-    # the vault come from the owner's token and are NOT filtered — that's
-    # the echo loop described in the header notes.
-    if: github.actor != 'github-actions[bot]'
+    # Skips the bot's own replies (loop guard) and PR comments (PR number
+    # would break `gh issue comment` below). Note: comments the agent
+    # posts via the vault fallback appear as the OWNER and are NOT
+    # filtered — see the echo-loop note in the header.
+    if: github.actor != 'github-actions[bot]' && !github.event.issue.pull_request
     steps:
       - name: Check out
         uses: actions/checkout@v4
@@ -50,12 +51,15 @@ jobs:
           fetch-depth: 1
 
       - name: Get OIDC token
+        # Step output (not $GITHUB_ENV) so the token reaches only the step
+        # below that calls the vault.
+        id: oidc
         run: |
           OIDC_TOKEN=$(curl -s \
             -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
             "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=vault" \
             | jq -r '.value')
-          echo "OIDC_TOKEN=${OIDC_TOKEN}" >> $GITHUB_ENV
+          echo "token=${OIDC_TOKEN}" >> "$GITHUB_OUTPUT"
 
       - name: Gather thread context
         run: |
@@ -64,13 +68,23 @@ jobs:
             --jq '{title: .title, body: (.body // "" | .[0:1500]),
                    comments: [.comments[-10:][] | {author: .author.login, body: (.body // "" | .[0:800])}]}' \
             > /tmp/thread.json
-          head -c 1200 ONBOARDING.md > /tmp/whoami.txt || true
-          head -c 1200 MEMORY.md > /tmp/memory.txt || true
+          # Byte-cap identity/memory without splitting a UTF-8 character
+          # (head -c could, and gh/jq then mangle the invalid tail).
+          python3 - <<'PY'
+          for src, dst in [("ONBOARDING.md", "/tmp/whoami.txt"),
+                           ("MEMORY.md", "/tmp/memory.txt")]:
+              try:
+                  data = open(src, "rb").read(1200)
+                  open(dst, "wb").write(data.decode("utf-8", "ignore").encode("utf-8"))
+              except FileNotFoundError:
+                  pass
+          PY
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Think of a reply (via vault)
         env:
+          OIDC_TOKEN: ${{ steps.oidc.outputs.token }}
           VAULT_URL: ${{ vars.VAULT_URL }}
         run: |
           SYSTEM=$(cat <<'EOF'
@@ -102,7 +116,9 @@ jobs:
             -H "Content-Type: application/json" \
             -d "$PAYLOAD" | jq -r '.result.content // .result // "🦀 (my brain hiccuped — try again in a minute)"' \
             > /tmp/reply.txt
-          head -c 2000 /tmp/reply.txt > /tmp/reply_short.txt
+          # UTF-8-boundary-safe 2000-byte cap (head -c could split a
+          # multibyte character mid-sentence).
+          python3 -c "d=open('/tmp/reply.txt','rb').read(2000); open('/tmp/reply_short.txt','wb').write(d.decode('utf-8','ignore').encode('utf-8'))"
 
       - name: Reply in thread
         run: |
