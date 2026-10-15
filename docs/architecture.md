@@ -47,7 +47,10 @@ is the full rewindable history.
 ## The three workflows (`.github/workflows/`)
 
 All three share the same skeleton: checkout → mint a GitHub OIDC token with
-`audience=vault` → do work → talk to the vault at `/proxy`.
+`audience=vault` → do work → talk to the vault at `/proxy`. Since v0.3 the
+token reaches the steps that need it via a step *output*
+(`steps.oidc.outputs.token`), not `$GITHUB_ENV`, so it doesn't persist in
+every later step's environment.
 
 ### `think.yml` — the heartbeat (the agent's deep-work mode)
 
@@ -68,39 +71,52 @@ All three share the same skeleton: checkout → mint a GitHub OIDC token with
   .github/workflows/` — a self-modification guard. The agent can change any
   file in the repo *except its own nervous system*. (This is one of three
   such guards; see "Defense in depth" below.)
-- Env plumbing: `VAULT_URL` comes from repo *variables* (not secrets);
-  `GH_TOKEN` is passed but `agent.py` never reads it — all GitHub traffic
-  goes through the vault. Vestigial; see maintenance notes.
+- Env plumbing: `VAULT_URL` comes from repo *variables* (not secrets).
+  `GH_TOKEN` is load-bearing since v0.3: `agent.py` uses `gh` with it to
+  list open issues (fallback when the vault's `list_issues` 404s) and to
+  post comments as `github-actions[bot]` (the react echo-loop fix). The
+  vault still carries everything privileged; see maintenance notes.
 
 ### `react.yml` — the ears (conversational layer)
 
-- **Triggers**: issues opened/reopened, any issue comment created. Skips
-  `github-actions[bot]` to avoid self-loops *from the bot's own replies*.
+- **Triggers**: issues opened/reopened, any issue comment created. The
+  job `if` skips `github-actions[bot]` actors (self-loop guard) and, since
+  v0.3, PR comments too (`!github.event.issue.pull_request` — `gh issue
+  comment` would fail on a PR number; see maintenance notes #5).
 - **Flow**: gather the issue thread with `gh` (title + body[:1500], last 10
   comments[:800] each) + first 1200 bytes each of `ONBOARDING.md` (identity)
-  and `MEMORY.md` (memory digest) → **single-shot** LLM call via the vault
+  and `MEMORY.md` (memory digest; byte cuts are UTF-8-boundary-safe since
+  v0.3) → **single-shot** LLM call via the vault
   (max_tokens 400) with a system prompt that says: be conversational; if
   asked to *do* something, acknowledge and say the next think cycle (≤15
   min) will pick it up — never claim work is done → post the reply (capped
-  at 2000 bytes) via `gh issue comment`, appearing as
+  at 2000 bytes, UTF-8-boundary-safe) via `gh issue comment`, appearing as
   `github-actions[bot]`.
 - **Design intent** (from the file header): react is *manner*, think is
   *matter*. Deep work never happens here — one LLM turn, one comment.
-- **[observed live]** There is a real echo-loop caveat: comments the agent
-  posts *through the vault* appear as the repo **owner**, not the bot, so
-  they re-trigger react and the bot replies to the agent's own status
-  comments. Details in maintenance notes.
+- **Echo loop — fixed agent-side (v0.3)**: **[observed live]** the agent's
+  comments used to post through the vault, which appears as the repo
+  **owner**, so react re-triggered on them and the bot replied to the
+  agent's own status comments (half of issue #1's 72 comments). `agent.py`
+  now posts via `gh` first — as `github-actions[bot]`, which the `if`
+  above filters. The echo returns only if the vault fallback path fires.
+  Details in maintenance notes #2.
 
 ### `telegram.yml` — the Telegram ear and mouth
 
 - **Trigger**: `repository_dispatch` event `telegram_message`, fired by the
   **telegram bridge worker** **[outside the repo]** when a Telegram message
   arrives at its `/webhook`.
-- **Flow**: log the message to `MEMORY.md` and commit+push immediately
-  (memory first, reply second) → single-shot LLM call via vault
-  (max_tokens 500, terse system prompt) → POST the reply (≤4000 chars) to
-  the bridge's `/send`, which delivers it via the Telegram API. The agent
-  never touches the Telegram API or bot token directly.
+- **Flow**: log the message to `MEMORY.md` **and** route it onto
+  `TASKS.md` under "## Open" as `- [ ] (telegram <user>) <text[:200
+  flattened]>` (v0.3 — MEMORY entries age out of the think loop's
+  2000-char window while TASKS.md is re-read every cycle; the text
+  reaches the script through env vars, never interpolation), then
+  commit+push immediately (memory first, reply second) → single-shot LLM
+  call via vault (max_tokens 500, terse system prompt) → POST the reply
+  (≤4000 chars) to the bridge's `/send`, which delivers it via the
+  Telegram API. The agent never touches the Telegram API or bot token
+  directly.
 
 ## The brain — `.github/scripts/agent.py`
 
@@ -111,24 +127,31 @@ Walkthrough of `run_agent_loop()`:
    iteration: `ONBOARDING.md`[:3000] (identity), `MEMORY.md`[-2000:]
    (memory), the task (from `workflow_dispatch` input, else "check TASKS.md
    and issues"), `TASKS.md`[:2000] (board), open issues via
-   `vault list_issues` (first 10, body[:800] each), `git log --oneline -5`
-   (recent activity), `scratch/` filenames (work in flight). Note what is
-   *not* included: `docs/`, `AGENTS.md`, `for-fleet/` bottles, issue
-   *comments* (only bodies). The agent must `read_file` those deliberately.
+   `fetch_open_issues()` — vault `list_issues` first with an `gh issue
+   list` fallback, source labeled, and on total failure an explicit
+   "FETCH FAILED — this does NOT mean the board is empty" (first 10,
+   body[:800] each), `git log --oneline -5` (recent activity), `scratch/`
+   filenames (work in flight), and — since v0.3 — a "## Fleet Bottles"
+   section (first line of each `for-fleet/*.md`, max 5). Note what is
+   *not* included: `docs/`, `AGENTS.md`, and issue *comments* (only
+   bodies). The agent must `read_file` those deliberately.
 2. **Think** — one LLM call via the vault with a strict contract: the entire
    response must be a single JSON object, either
    `{"tool_calls": [...], "thinking": "...", "done": false}` or
    `{"thinking": "...", "done": true, "summary": "..."}`. The prompt lists
    the ~11 available tools.
 3. **Parse** — leniently: strip markdown code fences, then take the first
-   `{` to the last `}` and `json.loads`. Unparseable responses are fed back
-   with "please respond in the JSON format" and the iteration is consumed.
+   `{` to the last `}` and `json.loads`. Since v0.3 this lives in
+   `parse_llm_decision()`, unit-tested in `tests/`. Unparseable responses
+   are fed back with "please respond in the JSON format" and the iteration
+   is consumed.
 4. **Act** — `execute_tool()` runs each tool call serially; results (truncated
    to 2000 chars) are appended to the conversation as the next user message.
    A 2-second sleep paces the loop against rate limits.
 5. **Repeat** until the LLM says `done` (→ append summary to `MEMORY.md`) or
    `max_iterations` is hit (default 10; → append "Hit max iterations" to
-   `MEMORY.md`).
+   `MEMORY.md`). Every exit path — done, max iterations, LLM error — also
+   persists the cycle's vital signs to `.agent-state.json` (see below).
 
 **The permissions model** (`PERMISSIONS` dict) has three tiers:
 `auto` (execute immediately), `vault` (goes through the vault, which enforces
@@ -152,17 +175,23 @@ and the vault allowlist.
   120s timeout, minus a tiny denylist (`rm -rf /`, `mkfs`, the fork bomb,
   `curl | bash`). This is a speed bump, not a security boundary; the real
   boundary is that the runner is throwaway and holds no secrets.
-- `run_tests()` — convention-based: `pytest tests/` if `tests/` exists, else
-  `npm test` if `package.json` exists, else "no test suite".
+- `run_tests()` — convention-based: `pytest tests/` if `tests/` exists —
+  falling back to `python3 -m unittest discover -s . -p "test_*.py" -v` when
+  pytest isn't installed (the runner's setup-python may lack it) — else
+  `npm test` if `package.json` exists, else "no test suite". A `tests/`
+  suite now exists (added with v0.3, unittest-style and
+  pytest-compatible).
 - `api_github(action, params)` / `api_cloudflare(action, params)` — generic
   passthroughs to the vault's `github` / `cloudflare` services. What actions
   actually exist is defined by the vault worker, not this repo.
-- `comment_issue(issue, body)` / `create_issue(title, body)` — vault
-  `github` service calls with owner/repo auto-detected from
-  `remote.origin.url` (falls back to `purplepincher/zero`, the template).
-  **[observed live]** these posts appear as the repo **owner**, because the
-  vault's GitHub token is the owner's — see maintenance notes for the echo
-  consequence.
+- `comment_issue(issue, body)` / `create_issue(title, body)` — `gh` CLI
+  first since v0.3: posts as `github-actions[bot]`, which react.yml's
+  actor filter skips — that identity choice is what broke the echo loop.
+  Vault `github` service calls remain as fallback; those posts appear as
+  the repo **owner** **[observed live]** (the vault's GitHub token is the
+  owner's) and would re-trigger react — see maintenance notes #2. Owner/
+  repo come from `GITHUB_REPOSITORY`, then `remote.origin.url`, then a
+  loud-warned fallback to `purplepincher/zero` (the template).
 - `git_commit(message)` — `git add -A`, `git reset .github/workflows/`,
   commit as `zero`. Note the loop itself never pushes; only think.yml's
   final step does.
@@ -173,8 +202,33 @@ with `{oidc_token, service, action, params}`. Two gotchas baked in: a custom
 default UA) and a 60s timeout. `llm_think()` sends `model: "default"` unless
 told otherwise; the vault maps that to its configured `LLM_MODEL`.
 
-**Vestigial**: `STATE_FILE = .agent-state.json` is defined and never used
-anywhere. Left over from an earlier design.
+**Local-brain mode / hermit-crab shells (v0.3)**: set `LOCAL_LLM_URL` to any
+OpenAI-compatible server's base URL (Ollama `http://localhost:11434/v1`,
+llama.cpp server, vLLM, LM Studio) and `llm_think()` POSTs directly to its
+`/chat/completions` — the vault is never contacted, so a local clone of this
+repo thinks with its own GPU/model, no registration, no keys. Pick the model
+with `LOCAL_LLM_MODEL`. This is the docs/clones.md hermit crab made
+concrete:
+
+```bash
+LOCAL_LLM_URL=http://localhost:11434/v1 LOCAL_LLM_MODEL=qwen2.5-coder:7b \
+  python3 .github/scripts/agent.py --task "your task here"
+```
+
+Notes: the local path uses a 120s timeout (small local models are slow and
+there is no shared rate limit); `model: "default"` maps to
+`LOCAL_LLM_MODEL`. GitHub-side tools degrade gracefully without tokens —
+`comment_issue`/`create_issue`/`list_issues` need `GH_TOKEN` (present in
+Actions; set it locally to `gh auth token` if you want those to work).
+Everything else (files, shell, git, memory) works anywhere.
+
+**State file (no longer vestigial — implemented v0.3)**:
+`STATE_FILE = .agent-state.json` used to be defined and never used; now
+`load_state()`/`save_state()` persist each cycle's `started_utc`, `task`,
+`outcome` (`completed:...` / `max_iterations` / `llm_error`), and
+`iterations_used`. It is committed with each heartbeat, so git log doubles
+as a vital-signs record. It is not yet fed back into `build_context()` —
+a sensible next step (see maintenance notes).
 
 ## The hands — `.github/scripts/act.py` (legacy)
 
@@ -224,6 +278,8 @@ lives in the Cloudflare worker, not here.
 | `MEMORY.md` | append-only memory digest | agent (`update_memory`, every done/max-iter; telegram log) |
 | `VAULT.md` | vault client contract + security model | human |
 | `docs/` | the system's self-description (this file included) | human + agents |
+| `tests/` | unittest-style suite, pytest-compatible (v0.3) | humans (agent may extend) |
+| `.agent-state.json` | per-cycle vital signs: start, task, outcome, iterations | agent (every cycle exit) |
 | `scratch/` | per-task ephemera, not memory | agent |
 | `git log` | the full, rewindable ground truth | everyone — append-only culture |
 
@@ -255,8 +311,8 @@ no secrets, ever.**
    one vault LLM turn → bot reply in thread. Deep work promised to the next
    think cycle.
 3. **Telegram**: DM → bridge `/webhook` → `repository_dispatch` →
-   telegram.yml → MEMORY.md log commit → one vault LLM turn → bridge
-   `/send` → reply in Telegram.
+   telegram.yml → MEMORY.md log + TASKS.md "## Open" routing commit → one
+   vault LLM turn → bridge `/send` → reply in Telegram.
 
 ## Extension points (where to plug in)
 
@@ -266,6 +322,7 @@ no secrets, ever.**
 - **New senses/reflexes** → new workflow triggered by whatever event,
   following the react.yml single-shot pattern.
 - **Teaching the agent** → edit `ONBOARDING.md` (identity), add `TASKS.md`
-  entries or issues (work), append `MEMORY.md` (facts). Notably the think
-  loop does *not* auto-include `docs/` — teach via the four files it does
-  read, or tell it to `read_file` the docs.
+  entries or issues (work), append `MEMORY.md` (facts), or drop a bottle
+  in `for-fleet/` (fleet broadcast — surfaced in context since v0.3). The
+  think loop still does *not* auto-include `docs/` or `AGENTS.md` — teach
+  via the files it does read, or tell it to `read_file` the docs.

@@ -20,7 +20,7 @@ Zero is the smallest complete seed of a Purple Pincher: an AI agent that lives e
 - **PRs** are communication
 - **Git log** is memory — rewindable, time-shaped, not a snapshot
 
-It wakes up on a schedule, thinks (LLM through the vault), acts (vault-proxied APIs), remembers (by committing), and sleeps. Every decision is a commit. You can read its mind with `git log`.
+It wakes up on a schedule (GitHub throttles `*/15` crons to ~4–5 runs/day in practice), thinks (LLM through the vault), acts (vault-proxied APIs), remembers (by committing), and sleeps. Every decision is a commit. You can read its mind with `git log`.
 
 ## Quick Start
 
@@ -60,13 +60,23 @@ As a Pincher grows, it moves into bigger shells — but the creature stays the s
 - **Turbo** — a self-contained application shell: one repo, one builder.
 - **Tapestry** — the quilt-worker: many repos, one coherent story.
 
-See `docs/clones.md` for the shell model.
+See `docs/clones.md` for the shell model. To *be* the hermit crab — run a
+clone of this repo locally with your own GPU model as the brain, no vault:
+
+```bash
+LOCAL_LLM_URL=http://localhost:11434/v1 LOCAL_LLM_MODEL=<model> \
+  python3 .github/scripts/agent.py --task "your task"
+```
+
+(Any OpenAI-compatible server works — see `docs/architecture.md`
+"Local-brain mode".)
 
 ## Layout
 
 ```
 .github/workflows/   think.yml, react.yml, telegram.yml
 .github/scripts/      agent.py (the brain), act.py (legacy v0.1 executor, unused)
+tests/                unittest-style test suite (pytest-compatible)
 docs/                 architecture.md, maintenance-notes.md, plugins.md, i2i.md, memory.md, clones.md, tripartite.md, registration.md
 AGENTS.md             operator's manual
 ONBOARDING.md         first-boot checklist

@@ -13,7 +13,8 @@ This repo IS an agent. Not code for an agent — the repo itself, running on
 GitHub Actions, is the agent. It is called a Purple Pincher zero.
 
 - **Body**: this repo — files, workflows, scripts.
-- **Heartbeat**: the `think` workflow, every 15 minutes. It runs the ReAct loop
+- **Heartbeat**: the `think` workflow, on a schedule (GitHub throttles
+  `*/15` crons; ~4–5×/day observed in practice). It runs the ReAct loop
   (`.github/scripts/agent.py`): observe → think → act → repeat.
 - **Ears**: the `react` workflow (GitHub issues and comments) and the
   `telegram` workflow (Telegram messages via the bridge worker).
@@ -41,7 +42,8 @@ worker. If you ever feel tempted to put a key in a file, stop and read
 1. Fork this repo.
 2. Register with the vault: open an issue titled "Register" — the fleet
    coordinator adds your repo to the vault allowlist.
-3. Done. The heartbeat wakes every 15 minutes. Open an issue to give it a task.
+3. Done. The heartbeat wakes on a schedule (GitHub throttles the cron; a
+   few times a day in practice). Open an issue to give it a task.
 
 ## How to talk to it
 
