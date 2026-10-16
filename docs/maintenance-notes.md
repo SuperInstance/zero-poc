@@ -225,6 +225,10 @@ New next steps, in rough impact order:
 10. Delete or clearly deprecate `act.py` (still dead code).
 11. Add a body-format or actor filter to react.yml so vault-fallback
     comments (owner identity) can't restart the echo loop.
+12. Build the System-1 idle gate (`docs/system1.md` has the researched
+    design + live benchmarks: laya/winnow discriminate idle vs busy at
+    P=0.19/0.81 and 0.004/0.995) — kills the "full LLM cycle to conclude
+    awaiting instructions" cost, the agent's biggest steady-state waste.
 
 ## v0.3 change log (2026-10-15)
 

@@ -222,6 +222,11 @@ there is no shared rate limit); `model: "default"` maps to
 Actions; set it locally to `gh auth token` if you want those to work).
 Everything else (files, shell, git, memory) works anywhere.
 
+A complementary tier — **System-1 decision models** (fast typed
+gates in front of the brain, e.g. an idle-heartbeat gate via Ollaya/laya)
+— is researched and designed in `docs/system1.md`, including live
+benchmark results from this repo's real state.
+
 **State file (no longer vestigial — implemented v0.3)**:
 `STATE_FILE = .agent-state.json` used to be defined and never used; now
 `load_state()`/`save_state()` persist each cycle's `started_utc`, `task`,

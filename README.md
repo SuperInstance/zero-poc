@@ -77,7 +77,7 @@ LOCAL_LLM_URL=http://localhost:11434/v1 LOCAL_LLM_MODEL=<model> \
 .github/workflows/   think.yml, react.yml, telegram.yml
 .github/scripts/      agent.py (the brain), act.py (legacy v0.1 executor, unused)
 tests/                unittest-style test suite (pytest-compatible)
-docs/                 architecture.md, maintenance-notes.md, plugins.md, i2i.md, memory.md, clones.md, tripartite.md, registration.md
+docs/                 architecture.md, maintenance-notes.md, system1.md, plugins.md, i2i.md, memory.md, clones.md, tripartite.md, registration.md
 AGENTS.md             operator's manual
 ONBOARDING.md         first-boot checklist
 TASKS.md              the task board
