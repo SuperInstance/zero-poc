@@ -57,35 +57,36 @@ digest, not the raw board.
 
 Both also said **no** for this repo's real current digest (one stale
 open issue, otherwise idle) — the correct answer. Cold-start (model
-load): ~3 s laya, ~11 s winnow; laya also runs fine CPU-only.
+load): ~3 s laya, ~11 s winnow; laya also runs fine CPU-only. tev1 via
+Ollama: no 92% / yes 97% (see Notes).
 
-## The design: an idle gate for the heartbeat
+## The idle gate (implemented 2026-10-16)
 
-Not yet implemented — this is the reviewed design.
+Shipped in agent.py the night after the research. Exactly the design
+below, now real code with tests (tests/test_agent.py, TestIdleGate):
 
 1. **Env**: `DECISION_URL` (empty = disabled; `http://localhost:11435`
-   locally), `DECISION_MODEL` (default `laya`).
+   locally), `DECISION_MODEL` (default `laya`),
+   `GATE_CONFIDENCE_THRESHOLD` (0.6).
 2. **Client**: `decide(questions, state)` → POST
-   `{DECISION_URL}/v1/decisions` with `{model, state, questions}`; parse
-   `answers.{id}.choice/.confidence/.probabilities`. Same shape as the
-   vault plugins (small, typed, JSON in/out).
-3. **Digest builder** (`build_gate_digest()`): counts + first lines of
-   open TASKS.md items, open issue titles, telegram inbox (TASKS.md
-   `(telegram …)` entries), last cycle outcome from `.agent-state.json`.
-   Plain prose, ~10 lines. Never raw markdown (see attempt 1).
-4. **Policy in `run_agent_loop()`**, before the first `llm_think()`:
-   - gate says **yes** (or DECISION_URL unset, or ANY error/timeout) →
-     run the full loop exactly as today. **Fail-open, always** — a broken
-     gate must never blind or block the agent.
-   - gate says **no** with confidence ≥ ~0.6 → skip the LLM entirely:
-     `save_state(outcome="gated_idle")`, do NOT append MEMORY.md (that
-     would recreate the noise problem one level down); log the skip in
-     the Actions log only. Optionally append one MEMORY.md line on
-     state *transitions* (busy→idle, idle→busy), not per cycle.
-5. **Where it runs**: locally via Ollaya (hermit-crab shells — pairs
-   with LOCAL_LLM_URL as a tiered brain: laya gate + local 7B System 2).
-   In Actions, either add a `decision` vault service (docs/plugins.md
-   pattern) or leave the gate local-only.
+   `{DECISION_URL}/v1/decisions`; parses `answers.{id}.choice/.confidence`.
+3. **`build_gate_digest()`**: counts + first lines of open TASKS.md
+   items, telegram inbox, open issue titles, last cycle outcome —
+   distilled prose, never raw markdown (attempt-1 lesson baked into a
+   code comment).
+4. **Policy in `run_agent_loop()`**: before the first `llm_think()`, and
+   ONLY for schedule cycles with no explicit `--task` (a human asking
+   directly always bypasses the gate). Confident "no" → `save_state(
+   outcome="gated_idle")`, no MEMORY.md write, return with zero LLM
+   calls. Everything else — "yes", sub-threshold confidence, no
+   DECISION_URL, any error/timeout — runs the full loop. **Fail-open,
+   verified live**: a tokenless local run (issues "fetch failed, count
+   unknown") dropped laya's confidence to 0.479 < 0.6, so the gate
+   correctly stepped aside and the loop ran.
+5. **Where it runs**: local/hermit-crab shells via Ollaya (pairs with
+   LOCAL_LLM_URL as a tiered brain: decision gate + local System 2). In
+   Actions it is dormant until a `decision` vault service exists
+   (docs/plugins.md pattern).
 
 Later applications of the same client, in rough value order: reflex-tier
 classification for incoming tasks (ONBOARDING.md's Known/Semi-known/
@@ -96,10 +97,17 @@ calls before `execute_tool` (Qwen3Guard-style). Ollaya also speaks MCP
 
 ## Notes and unknowns
 
-- **"dtev1" could not be found** — not in the Ollaya catalog, HF, or the
-  web (searched `dtev1`, `dte-v1`). Closest real names in the family:
-  `d1`, `decima`, `kev`, `winnow`. If it exists under another spelling,
-  correct this file.
+- **tev1** (the model originally mentioned as "dtev1"): Together AI's
+  experimental open Jev-like family — [Tev1-4B-experimental](https://huggingface.co/togethercomputer/Tev1-4B-experimental)
+  (Qwen3.5-4B SFT) and a 0.8B variant; ranks well on the [Jev Decision
+  Index](https://huggingface.co/spaces/multimodalart/jev-decision-index).
+  Pulled via [Ollama](https://ollama.com/library/tev1) (Q8_0, 4.3B) and
+  benchmarked on the same idle/busy digests: **no 92% / yes 97%** —
+  clean discrimination, 0.3 s warm, but ~46 s cold model load on this
+  machine's 6 GB GPU, and it speaks Ollama's `--ask` interface rather
+  than the TypeSafe `/v1/decisions` contract the gate client targets
+  (a thin adapter or an Ollaya Modelfile import would bridge it).
+  Together's checkpoints are Apache-2.0.
 - Confidence formula (Ollaya docs): (K·p_max − 1)/(K − 1), clamped —
   i.e. how far the top probability is above uniform, not absolute
   certainty. Thresholds should be tuned on observed distributions, and

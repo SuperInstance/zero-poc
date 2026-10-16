@@ -223,9 +223,12 @@ Actions; set it locally to `gh auth token` if you want those to work).
 Everything else (files, shell, git, memory) works anywhere.
 
 A complementary tier — **System-1 decision models** (fast typed
-gates in front of the brain, e.g. an idle-heartbeat gate via Ollaya/laya)
-— is researched and designed in `docs/system1.md`, including live
-benchmark results from this repo's real state.
+gates in front of the brain) — is IMPLEMENTED as the idle gate: with
+`DECISION_URL` set, `gate_says_work()` asks a decision model (Ollaya
+`/v1/decisions`, default model `laya`) whether the distilled digest
+shows actionable work, and a confident "no" skips the LLM entirely
+(outcome `gated_idle`). Fail-open by construction; explicit `--task`
+bypasses it. Research, benchmarks, and design: `docs/system1.md`.
 
 **State file (no longer vestigial — implemented v0.3)**:
 `STATE_FILE = .agent-state.json` used to be defined and never used; now

@@ -357,6 +357,98 @@ class TestLocalBrainMode(unittest.TestCase):
         self.assertEqual(out, "vault says hi")
 
 
+class TestIdleGate(TempCwdTestCase):
+    """The System-1 gate (docs/system1.md): fail-open by construction —
+    only a confident "no" skips the LLM; everything else runs the loop."""
+
+    def test_decide_parses_answers(self):
+        body = {"answers": {"actionable_work": {"choice": "no",
+                                                "confidence": 0.9,
+                                                "probabilities": {}}}}
+        fake = mock.MagicMock()
+        fake.__enter__.return_value.read.return_value = json.dumps(body).encode()
+        with mock.patch.object(agent, "DECISION_URL", "http://x:1"), \
+             mock.patch("urllib.request.urlopen", return_value=fake) as up:
+            out = agent.decide({"q": {}}, "state text")
+        self.assertEqual(out["actionable_work"]["choice"], "no")
+        req = up.call_args.args[0]
+        self.assertTrue(req.full_url.endswith("/v1/decisions"))
+
+    def test_decide_fails_open_on_error(self):
+        with mock.patch.object(agent, "DECISION_URL", "http://x:1"), \
+             mock.patch("urllib.request.urlopen",
+                        side_effect=ConnectionError("refused")):
+            self.assertIsNone(agent.decide({"q": {}}, "state"))
+
+    def _gate(self, answer):
+        with mock.patch.object(agent, "gate_says_work", lambda: answer):
+            return answer
+
+    def test_confident_no_skips_loop(self):
+        with mock.patch.object(agent, "DECISION_URL", "http://x:1"), \
+             mock.patch.object(agent, "gate_says_work", return_value=False), \
+             mock.patch.object(agent, "llm_think") as think, \
+             mock.patch.object(agent, "STATE_FILE",
+                               Path(self.tmp.name) / "state.json"):
+            agent.run_agent_loop(None)
+        think.assert_not_called()
+        saved = json.loads((Path(self.tmp.name) / "state.json").read_text())
+        self.assertEqual(saved["outcome"], "gated_idle")
+        self.assertEqual(saved["iterations_used"], 0)
+
+    def test_explicit_task_bypasses_gate(self):
+        # gate says idle, but a human passed --task → loop must run
+        with mock.patch.object(agent, "DECISION_URL", "http://x:1"), \
+             mock.patch.object(agent, "gate_says_work", return_value=False), \
+             mock.patch.object(agent, "llm_think",
+                               return_value='{"thinking": "ok", "done": true, "summary": "did it"}') as think, \
+             mock.patch.object(agent, "STATE_FILE",
+                               Path(self.tmp.name) / "state.json"):
+            agent.run_agent_loop("do the thing")
+        think.assert_called_once()
+        saved = json.loads((Path(self.tmp.name) / "state.json").read_text())
+        self.assertTrue(saved["outcome"].startswith("completed:"))
+
+    def test_gate_logic_matrix(self):
+        cases = [  # (answer, expected gate_says_work)
+            ({"choice": "no", "confidence": 0.9}, False),
+            ({"choice": "no", "confidence": 0.5}, True),   # below threshold
+            ({"choice": "yes", "confidence": 0.9}, True),
+            ({}, True),                                    # malformed
+            (None, True),                                  # decide failed
+        ]
+        for answer, expected in cases:
+            with mock.patch.object(agent, "DECISION_URL", "http://x:1"), \
+                 mock.patch.object(agent, "decide",
+                                   return_value=({"actionable_work": answer}
+                                                 if answer is not None else None)), \
+                 mock.patch.object(agent, "build_gate_digest", return_value="d"):
+                self.assertEqual(agent.gate_says_work(), expected, answer)
+
+    def test_build_gate_digest_counts_open_tasks(self):
+        Path("TASKS.md").write_text(
+            "# TASKS.md — Task Board\n\n## Open\n"
+            "- [ ] Fix the deploy script\n"
+            "- [ ] (telegram Casey) add dark mode\n\n"
+            "## Done\n- [x] old thing\n\n## Awaiting Instructions\n- [x] idle\n")
+        digest = agent.build_gate_digest()
+        self.assertIn("open tasks: 2", digest)
+        self.assertIn("Fix the deploy script", digest)
+        self.assertIn("unread user messages via telegram: 1", digest)
+        self.assertNotIn("old thing", digest)   # done section excluded
+
+    def test_no_gate_url_always_runs(self):
+        with mock.patch.object(agent, "DECISION_URL", ""), \
+             mock.patch.object(agent, "gate_says_work") as gate:
+            gate.return_value = False  # would skip if consulted — it must not be
+            with mock.patch.object(agent, "llm_think",
+                                   return_value='{"done": true, "summary": "x"}'), \
+                 mock.patch.object(agent, "STATE_FILE",
+                                   Path(self.tmp.name) / "state.json"):
+                agent.run_agent_loop(None)
+        gate.assert_not_called()
+
+
 class TestToolPrompt(unittest.TestCase):
     def test_lists_core_tools_and_deferred_perms(self):
         prompt = agent.build_tool_prompt()

@@ -29,8 +29,10 @@
 
 - [2026-10-15 22:20 UTC] Owner maintenance (via an external coding agent, ZCode): agent comments now post as github-actions[bot] via gh (react echo loop fixed); open issues now listed via gh when the vault 404s — the issue board is visible again; Telegram messages now create TASKS.md entries under ## Open; loop outcome persisted to .agent-state.json; tests/ suite added (run_tests works now); see docs/maintenance-notes.md v0.3 change log.
 - [2026-10-15 22:24 UTC] Completed: Awaiting further instructions or new tasks. No new actions to take at this time.
+- [2026-10-16 00:40 UTC] Completed: Awaiting further instructions or new tasks.
 
 - [2026-10-16 01:15 UTC] Completed: Awaiting further instructions or new tasks. No new actions to take at this time.
 
 - [CURRENT_TIME] Completed: Awaiting further instructions or new tasks.
-- [2026-10-16 00:40 UTC] Completed: Awaiting further instructions or new tasks.
+
+- [2026-10-16 01:15 UTC] Owner maintenance (ZCode): System-1 idle gate implemented in agent.py — set DECISION_URL (e.g. http://localhost:11435, Ollaya) and a confident 'no actionable work' decision skips the LLM that cycle (outcome gated_idle, fail-open, explicit --task bypasses). Benchmarked: laya, winnow:e4b, tev1 all discriminate idle vs busy correctly. See docs/system1.md. Tests: 44 passing.

@@ -27,7 +27,9 @@ to gh when the vault 404s; for-fleet/ bottles enter the context; loop
 outcome persists to STATE_FILE; LLM parsing extracted to
 parse_llm_decision() for testability; run_tests() can use stdlib unittest
 when pytest is absent; LOCAL_LLM_URL enables hermit-crab mode (think via
-a local OpenAI-compatible server, no vault).
+a local OpenAI-compatible server, no vault); DECISION_URL enables the
+System-1 idle gate (docs/system1.md) — a decision model skips the LLM
+entirely on confidently-idle cycles, fail-open.
 """
 
 import importlib.util
@@ -50,6 +52,18 @@ VAULT_URL = os.environ.get("VAULT_URL") or "https://superinstance-vault.casey-di
 #     python3 .github/scripts/agent.py --task "fix the README"
 LOCAL_LLM_URL = os.environ.get("LOCAL_LLM_URL", "")
 LOCAL_LLM_MODEL = os.environ.get("LOCAL_LLM_MODEL", "local")
+
+# System-1 idle gate (docs/system1.md): a decision model behind a
+# TypeSafe-compatible endpoint (Ollaya POST /v1/decisions — laya, winnow,
+# tev1-class models) answers "is there actionable work?" in milliseconds
+# BEFORE the expensive ReAct loop starts. Disabled unless DECISION_URL is
+# set (local/hermit-crab runs; in Actions add a vault decision service or
+# leave unset). The gate is fail-open by construction: any error, timeout,
+# low confidence, or "yes" runs the full loop exactly as before. An
+# explicit --task always bypasses it (a human asked; don't second-guess).
+DECISION_URL = os.environ.get("DECISION_URL", "")
+DECISION_MODEL = os.environ.get("DECISION_MODEL", "laya")
+GATE_CONFIDENCE_THRESHOLD = 0.6
 
 MAX_ITERATIONS = 10
 SCRATCH_DIR = Path("scratch")
@@ -423,6 +437,110 @@ def execute_tool(tool_call):
         return False, f"Error: {e}"
 
 
+def decide(questions, state):
+    """One System-1 decision via a TypeSafe-compatible endpoint.
+
+    Targets Ollaya's POST /v1/decisions (contract verified against
+    Ollaya 0.13, see docs/system1.md):
+      {"model", "state", "questions": {id: {type, instructions, criteria}}}
+      → {"answers": {id: {choice, confidence, probabilities, ...}}}
+    Returns the answers dict, or None on ANY failure — callers must treat
+    None as "no decision" and fall back to their System-2 path.
+    """
+    import urllib.request
+
+    payload = {"model": DECISION_MODEL, "state": state, "questions": questions}
+    req = urllib.request.Request(
+        f"{DECISION_URL.rstrip('/')}/v1/decisions",
+        data=json.dumps(payload).encode(),
+        headers={
+            "Content-Type": "application/json",
+            "User-Agent": "purplepincher-zero/1.0 (+https://github.com/purplepincher/zero)",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode())
+        answers = data.get("answers")
+        return answers if isinstance(answers, dict) else None
+    except Exception as e:
+        log(f"Decision call failed ({DECISION_URL}): {e}", "WARN")
+        return None
+
+
+def build_gate_digest():
+    """Distill 'is there anything to do?' into a few lines of prose.
+
+    MEASURED (docs/system1.md): decision models judge the TEXT, not the
+    repo — feeding raw TASKS.md/MEMORY.md markdown fails badly (idle reads
+    as busy, P(yes)=0.70 vs 0.60, wrong direction), while a distilled
+    digest discriminates cleanly (laya 0.19/0.81, winnow 0.004/0.995).
+    Keep this summary-shaped; never paste the raw board in here.
+    """
+    lines = []
+    open_items = []
+    try:
+        tasks = Path("TASKS.md").read_text()
+        open_section = tasks.split("## Open", 1)[-1].split("\n## ", 1)[0]
+        open_items = [l.strip() for l in open_section.splitlines()
+                      if l.strip().startswith("- [ ]")]
+    except Exception:
+        pass
+    lines.append(f"open tasks: {len(open_items)}")
+    for item in open_items[:5]:
+        lines.append("  task: " + item[len("- [ ]"):].strip()[:120])
+    tg = sum(1 for item in open_items if "(telegram" in item.lower())
+    if tg:
+        lines.append(f"unread user messages via telegram: {tg}")
+    try:
+        issues, source = fetch_open_issues()
+        if issues is None:
+            lines.append("open issues: fetch failed, count unknown")
+        else:
+            lines.append(f"open issues: {len(issues)}")
+            for i in issues[:5]:
+                lines.append(f"  issue #{i.get('number')}: {str(i.get('title'))[:100]}")
+    except Exception:
+        lines.append("open issues: fetch failed, count unknown")
+    state = load_state()
+    if state:
+        lines.append(f"last cycle outcome: {str(state.get('outcome', '?'))[:120]}")
+    return "Agent digest: " + " ".join(lines)
+
+
+def gate_says_work():
+    """Ask the System-1 gate whether this cycle needs the full loop.
+
+    Returns True (run the loop) unless the gate CONFIDENTLY says idle:
+    choice "no" with confidence >= GATE_CONFIDENCE_THRESHOLD. Any error,
+    malformed answer, sub-threshold confidence, or "yes" → True. A broken
+    gate must never block the agent (docs/system1.md design).
+    """
+    questions = {
+        "actionable_work": {
+            "type": "choice",
+            "instructions": (
+                "An AI agent checks this digest before invoking its "
+                "expensive reasoning model. Are there specific open "
+                "items to act on?"),
+            "criteria": {
+                "yes": "Specific open tasks, user requests, or unresolved "
+                       "problems are listed",
+                "no": "No specific open items; only idle, awaiting, or "
+                      "status entries",
+            },
+        },
+    }
+    answers = decide(questions, build_gate_digest())
+    if not answers:
+        return True
+    a = answers.get("actionable_work") or {}
+    choice, conf = a.get("choice"), a.get("confidence", 0.0)
+    log(f"Gate: actionable_work={choice} confidence={conf}")
+    return not (choice == "no" and conf >= GATE_CONFIDENCE_THRESHOLD)
+
+
 def fetch_open_issues():
     """Open issues for this repo: vault first, gh CLI fallback.
 
@@ -649,6 +767,24 @@ def run_agent_loop(task_description=None, max_iterations=None):
     started_utc = datetime.now(timezone.utc).isoformat()
     outcome = "unknown"
     iterations_used = 0
+
+    # System-1 idle gate (docs/system1.md). Only for schedule-driven
+    # cycles with no explicit task — an explicit --task is a human asking
+    # directly and always bypasses the gate. Skipped cycles persist
+    # outcome "gated_idle" to STATE_FILE but do NOT touch MEMORY.md (a
+    # per-cycle "nothing to do" line is exactly the noise the MEMORY
+    # digest doesn't need).
+    if DECISION_URL and not task_description and not gate_says_work():
+        outcome = "gated_idle"
+        save_state({
+            "schema": 1,
+            "started_utc": started_utc,
+            "task": "",
+            "outcome": outcome,
+            "iterations_used": 0,
+        })
+        log("Idle gate: nothing actionable — LLM skipped this cycle")
+        return
 
     conversation = []
 
