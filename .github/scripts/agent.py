@@ -72,6 +72,7 @@ SCRATCH_DIR = Path("scratch")
 # how many iterations it used. It is committed with everything else, so the
 # git log doubles as the agent's vital-signs record.
 STATE_FILE = Path(".agent-state.json")
+MEMORY_FILE = Path("MEMORY.md")
 
 # Permissions model
 # - "auto": execute immediately, no approval needed
@@ -503,9 +504,9 @@ def build_gate_digest():
                 lines.append(f"  issue #{i.get('number')}: {str(i.get('title'))[:100]}")
     except Exception:
         lines.append("open issues: fetch failed, count unknown")
-    state = load_state()
-    if state:
-        lines.append(f"last cycle outcome: {str(state.get('outcome', '?'))[:120]}")
+    # Sprint-0 law: the gate NEVER sees its own prior verdict. Feeding
+    # "last cycle outcome" back created an idle latch (one gated_idle
+    # blinded the gate to visible issues until a human intervened).
     return "Agent digest: " + " ".join(lines)
 
 
@@ -767,6 +768,17 @@ def run_agent_loop(task_description=None, max_iterations=None):
     started_utc = datetime.now(timezone.utc).isoformat()
     outcome = "unknown"
     iterations_used = 0
+    substantive = False
+
+    # Sprint-0 D4: duty cycle overrides the gate — after 6h without
+    # substantive work the agent probes regardless of what the digest
+    # says. An agent that can only be woken by outside change is a
+    # latch, not a drive.
+    forced_probe = not task_description and should_force_probe(prev)
+    if forced_probe:
+        h = hours_since_substantive_work(prev)
+        log(f"Duty cycle: {h:.1f}h since substantive work — "
+            f"forced probe, gate bypassed")
 
     # System-1 idle gate (docs/system1.md). Only for schedule-driven
     # cycles with no explicit task — an explicit --task is a human asking
@@ -774,7 +786,8 @@ def run_agent_loop(task_description=None, max_iterations=None):
     # outcome "gated_idle" to STATE_FILE but do NOT touch MEMORY.md (a
     # per-cycle "nothing to do" line is exactly the noise the MEMORY
     # digest doesn't need).
-    if DECISION_URL and not task_description and not gate_says_work():
+    if (DECISION_URL and not task_description and not forced_probe
+            and not gate_says_work()):
         outcome = "gated_idle"
         save_state({
             "schema": 1,
@@ -782,6 +795,8 @@ def run_agent_loop(task_description=None, max_iterations=None):
             "task": "",
             "outcome": outcome,
             "iterations_used": 0,
+            "last_substantive_utc": next_substantive_ts(
+                prev, False, started_utc),
         })
         log("Idle gate: nothing actionable — LLM skipped this cycle")
         return
@@ -840,9 +855,16 @@ def run_agent_loop(task_description=None, max_iterations=None):
         if decision.get("done"):
             summary = decision.get("summary", "Task complete")
             log(f"Agent reports done: {summary}")
-            outcome = f"completed: {summary[:200]}"
-            # Update memory
-            update_memory(f"Completed: {summary}")
+            if substantive or task_description:
+                outcome = f"completed: {summary[:200]}"
+                update_memory(f"Completed: {summary}")
+            else:
+                # Sprint-0 D3: a schedule-driven cycle that completed
+                # nothing substantive writes NO "Completed:" line — that
+                # pattern filled MEMORY.md with idle chatter and evicted
+                # real context. The state file still records the cycle.
+                outcome = "completed_noop"
+                log("No-op completion: MEMORY.md left untouched", "INFO")
             break
 
         # Execute tool calls
@@ -858,6 +880,8 @@ def run_agent_loop(task_description=None, max_iterations=None):
             success, result = execute_tool(tc)
             status = "OK" if success else "FAIL"
             log(f"  [{status}] {tc.get('tool')}")
+            if success and tc.get("tool") in SUBSTANTIVE_TOOLS:
+                substantive = True
             results.append({
                 "tool": tc.get("tool"),
                 "success": success,
@@ -891,6 +915,8 @@ def run_agent_loop(task_description=None, max_iterations=None):
         "task": (task_description or "")[:500],
         "outcome": outcome,
         "iterations_used": iterations_used,
+        "last_substantive_utc": next_substantive_ts(
+            prev, substantive or bool(task_description), started_utc),
     })
     log("Agent loop complete")
 
@@ -901,6 +927,41 @@ def load_state():
         return json.loads(STATE_FILE.read_text())
     except Exception:
         return {}
+
+
+# Sprint-0 D4 — the duty cycle (vision PLAN.md law 3). After
+# PROBE_AFTER_HOURS without substantive work the agent must LOOK,
+# gate or no gate. The latch resets ONLY on substantive work: a probe
+# that finds nothing leaves the agent forced (cost stays bounded by
+# cadence). "Substantive" = a tool that changed something; reads and
+# scratch notes do not count.
+SUBSTANTIVE_TOOLS = {"write_file", "run_shell", "run_tests",
+                     "git_commit", "git_push_branch"}
+PROBE_AFTER_HOURS = 6
+
+
+def hours_since_substantive_work(state, now=None):
+    """Hours since the last substantive cycle; None if never/unparsable."""
+    ts = (state or {}).get("last_substantive_utc")
+    if not ts:
+        return None
+    try:
+        then = datetime.fromisoformat(ts)
+        return ((now or datetime.now(timezone.utc)) - then).total_seconds() / 3600
+    except (ValueError, TypeError):
+        return None
+
+
+def should_force_probe(state, now=None):
+    h = hours_since_substantive_work(state, now)
+    return h is not None and h > PROBE_AFTER_HOURS
+
+
+def next_substantive_ts(prev, substantive, started_utc):
+    """Carry the clock: advance on substantive cycles, else inherit."""
+    if substantive:
+        return started_utc
+    return (prev or {}).get("last_substantive_utc") or started_utc
 
 
 def save_state(state):
@@ -921,7 +982,7 @@ def update_memory(entry):
     context (they remain readable in git).
     """
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    with open("MEMORY.md", "a") as f:
+    with MEMORY_FILE.open("a") as f:
         f.write(f"\n- [{ts}] {entry}\n")
     log(f"Memory updated: {entry[:100]}")
 

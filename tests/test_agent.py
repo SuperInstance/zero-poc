@@ -14,6 +14,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
+from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / ".github" / "scripts"))
 import agent  # noqa: E402
@@ -460,3 +461,102 @@ class TestToolPrompt(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestSprint0DutyCycle(unittest.TestCase):
+    """Sprint-0 D4: the drive. After PROBE_AFTER_HOURS without
+    substantive work the agent must probe even when the gate says skip."""
+
+    def test_no_history_never_forces(self):
+        self.assertFalse(agent.should_force_probe({}))
+        self.assertFalse(agent.should_force_probe(
+            {"last_substantive_utc": "not-a-date"}))
+
+    def test_forces_after_six_hours(self):
+        now = datetime.now(timezone.utc)
+        recent = (now - timedelta(hours=2)).isoformat()
+        old = (now - timedelta(hours=7)).isoformat()
+        self.assertFalse(agent.should_force_probe(
+            {"last_substantive_utc": recent}, now))
+        self.assertTrue(agent.should_force_probe(
+            {"last_substantive_utc": old}, now))
+
+    def test_substantive_ts_carries_and_advances(self):
+        prev = {"last_substantive_utc": "2026-10-01T00:00:00+00:00"}
+        self.assertEqual(agent.next_substantive_ts(prev, False, "NOW"),
+                         "2026-10-01T00:00:00+00:00")
+        self.assertEqual(agent.next_substantive_ts(prev, True, "NOW"), "NOW")
+        self.assertEqual(agent.next_substantive_ts({}, False, "NOW"), "NOW")
+
+    def test_forced_probe_bypasses_gate(self):
+        old = (datetime.now(timezone.utc)
+               - timedelta(hours=7)).isoformat()
+        with mock.patch.object(agent, "DECISION_URL", "http://gate"), \
+             mock.patch.object(agent, "gate_says_work",
+                               return_value=False) as gate, \
+             mock.patch.object(agent, "load_state",
+                               return_value={"last_substantive_utc": old}), \
+             mock.patch.object(agent, "llm_think",
+                               return_value='{"done": true, '
+                                           '"summary": "probed"}'), \
+             mock.patch.object(agent, "STATE_FILE",
+                               Path(tempfile.mkdtemp()) / "state.json"):
+            agent.run_agent_loop(None)
+        gate.assert_not_called()  # the duty cycle outranks the gate
+
+    def test_recent_work_leaves_gate_in_charge(self):
+        recent = datetime.now(timezone.utc).isoformat()
+        with mock.patch.object(agent, "DECISION_URL", "http://gate"), \
+             mock.patch.object(agent, "gate_says_work",
+                               return_value=False) as gate, \
+             mock.patch.object(agent, "load_state",
+                               return_value={"last_substantive_utc": recent}), \
+             mock.patch.object(agent, "STATE_FILE",
+                               Path(tempfile.mkdtemp()) / "state.json"):
+            agent.run_agent_loop(None)
+        gate.assert_called_once()
+
+
+class TestSprint0DigestAndNoop(TempCwdTestCase):
+    """Sprint-0 D2/D3: the gate never sees its own verdict; a no-op
+    completion writes nothing to MEMORY.md."""
+
+    def test_digest_has_no_self_feedback(self):
+        Path("TASKS.md").write_text("## Open\n")
+        with mock.patch.object(agent, "STATE_FILE",
+                               Path(self.tmp.name) / "state.json"):
+            Path(self.tmp.name, "state.json").write_text(
+                json.dumps({"outcome": "gated_idle"}))
+            digest = agent.build_gate_digest()
+        self.assertNotIn("last cycle outcome", digest)
+        self.assertNotIn("gated_idle", digest)
+
+    def test_noop_completion_writes_no_memory(self):
+        mem = Path(self.tmp.name) / "MEMORY.md"
+        with mock.patch.object(agent, "llm_think",
+                               return_value='{"done": true, "summary": '
+                                           '"awaiting instructions"}'), \
+             mock.patch.object(agent, "MEMORY_FILE", mem), \
+             mock.patch.object(agent, "STATE_FILE",
+                               Path(self.tmp.name) / "state.json"):
+            agent.run_agent_loop(None)  # no task, no tools → no-op claim
+        state = json.loads((Path(self.tmp.name) / "state.json").read_text())
+        self.assertEqual(state["outcome"], "completed_noop")
+        self.assertFalse(mem.exists())  # nothing written at all
+
+    def test_substantive_completion_still_writes(self):
+        mem = Path(self.tmp.name) / "MEMORY.md"
+        with mock.patch.object(agent, "llm_think",
+                               side_effect=[
+                                   '{"tool_calls": [{"tool": "write_file",'
+                                   ' "args": {"path": "NOTE.md", '
+                                   '"content": "x"}}]}',
+                                   '{"done": true, "summary": "wrote note"}',
+                               ]), \
+             mock.patch.object(agent, "MEMORY_FILE", mem), \
+             mock.patch.object(agent, "STATE_FILE",
+                               Path(self.tmp.name) / "state.json"):
+            agent.run_agent_loop(None)
+        state = json.loads((Path(self.tmp.name) / "state.json").read_text())
+        self.assertTrue(state["outcome"].startswith("completed:"))
+        self.assertIn("wrote note", mem.read_text())
