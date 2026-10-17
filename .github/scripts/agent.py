@@ -33,6 +33,7 @@ entirely on confidently-idle cycles, fail-open.
 """
 
 import importlib.util
+import re
 import json
 import os
 import subprocess
@@ -982,6 +983,12 @@ def update_memory(entry):
     context (they remain readable in git).
     """
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    # Sprint-0 D6 — cited, not judged: an entry that cites no commit SHA
+    # is stamped [unverified] with the date. Later work (or the
+    # consolidation job) can backfill citations; git show settles any
+    # claim in seconds with no model in the loop.
+    if not re.search(r"\b[0-9a-f]{7,40}\b", entry):
+        entry = f"{entry} [unverified, {ts}]"
     with MEMORY_FILE.open("a") as f:
         f.write(f"\n- [{ts}] {entry}\n")
     log(f"Memory updated: {entry[:100]}")

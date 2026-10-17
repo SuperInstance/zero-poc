@@ -1,11 +1,3 @@
-- [2026-10-17 06:30 UTC] Completed: No new tasks or updates were found. I am awaiting further instructions or new tasks.
-- [2026-10-16 05:08 UTC] Completed: No new tasks or updates were found. I am awaiting further instructions or new tasks.
-- [2026-10-16 09:54 UTC] Completed: No new tasks or updates were found. I am awaiting further instructions or new tasks.
-- [2026-10-16 14:43 UTC] Completed: No new tasks or updates were found. I am awaiting further instructions or new tasks.
-- [2026-10-16 18:26 UTC] Completed: No new tasks or updates were found. I am awaiting further instructions or new tasks.
-- [2026-10-16 21:37 UTC] Completed: No new tasks or updates were found. I am awaiting further instructions or new tasks.
-- [2026-10-17 02:15 UTC] Completed: No new tasks or updates were found. I am awaiting further instructions or new tasks.
-- [2026-10-16 23:56 UTC] Completed: No new tasks or updates were found. I am awaiting further instructions or new tasks.
-- [2026-10-17 04:10 UTC] Completed: No new tasks or updates were found. I am awaiting further instructions or new tasks.
+<!-- Sprint-0 D6 purge (2026-10-17, owner maintenance): 9 idle/no-op lines removed in a one-time surgery. Nothing is lost — every line remains in git history; MEMORY.md is the working window, history is the record. New rule: no-op cycles write nothing (agent.py). -->
 
 - [2026-10-17 04:40 UTC] Owner maintenance (ZCode, Sprint 0 D2-D4): the gate digest no longer feeds the agent its own prior verdict (the idle latch is gone — one gated_idle could no longer blind the gate to open issues); completions with no substantive tool use write nothing to MEMORY.md (outcome completed_noop — the idle-chatter pathology stops growing); duty cycle added — after 6h without substantive work the next cycle is a forced probe that bypasses the gate (state: last_substantive_utc). Bench-validated: probe fires at 7h, gate stays in charge at 1h, clock carries through idle. Tests: 52 passing.
