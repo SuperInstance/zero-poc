@@ -74,6 +74,11 @@ SCRATCH_DIR = Path("scratch")
 # git log doubles as the agent's vital-signs record.
 STATE_FILE = Path(".agent-state.json")
 MEMORY_FILE = Path("MEMORY.md")
+# Sprint-0 D5: CONTEXT.md is the working memory — rewritten, never
+# appended. Live load-bearing facts only (## Facts table: claim | sha |
+# ts | confidence). MEMORY.md stays the append-only event log; git
+# history is its archive; nothing reads it at runtime anymore.
+CONTEXT_FILE = Path("CONTEXT.md")
 
 # Permissions model
 # - "auto": execute immediately, no approval needed
@@ -602,11 +607,17 @@ def build_context(task_description=None):
     except:
         parts.append("## Who I Am\nI am a Purple Pincher zero — a GitHub-native agent.")
 
-    # Memory
+    # Memory — Sprint-0 D5: CONTEXT.md (rewritten working memory) is
+    # preferred; the MEMORY.md tail is only a fallback so a fresh or
+    # broken clone is never memoryless.
     try:
-        parts.append("## What I've Learned\n" + Path("MEMORY.md").read_text()[-2000:])
-    except:
-        pass
+        parts.append("## What I Know\n" + CONTEXT_FILE.read_text()[:2000])
+    except Exception:
+        try:
+            parts.append("## What I've Learned\n"
+                         + MEMORY_FILE.read_text()[-2000:])
+        except Exception:
+            pass
 
     # Current task
     if task_description:

@@ -560,3 +560,26 @@ class TestSprint0DigestAndNoop(TempCwdTestCase):
         state = json.loads((Path(self.tmp.name) / "state.json").read_text())
         self.assertTrue(state["outcome"].startswith("completed:"))
         self.assertIn("wrote note", mem.read_text())
+
+
+class TestSprint0ContextMemory(TempCwdTestCase):
+    """Sprint-0 D5: CONTEXT.md is the working memory; MEMORY.md tail is
+    only a fallback."""
+
+    def test_context_preferred_when_present(self):
+        Path("CONTEXT.md").write_text("# working memory\nfact one")
+        Path("MEMORY.md").write_text("event log noise")
+        ctx = agent.build_context(None)
+        self.assertIn("What I Know", ctx)
+        self.assertIn("fact one", ctx)
+        self.assertNotIn("event log noise", ctx)
+
+    def test_falls_back_to_memory_tail(self):
+        Path("MEMORY.md").write_text("old events\nlatest event")
+        ctx = agent.build_context(None)
+        self.assertIn("What I've Learned", ctx)
+        self.assertIn("latest event", ctx)
+
+    def test_never_memoryless(self):
+        ctx = agent.build_context(None)  # neither file exists
+        self.assertIsInstance(ctx, str)
