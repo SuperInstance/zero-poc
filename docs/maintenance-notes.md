@@ -285,3 +285,50 @@ same day as the deep dive above. Twelve changes:
     OpenAI-compatible `/chat/completions` (Ollama, llama.cpp, vLLM, LM
     Studio) — no vault, no keys, no registration. Lets a local clone of
     this repo run entirely on one machine + GPU. Covered by tests.
+
+## Sprint 0 + Sprint 1 change log (2026-10-17, ZCode council-driven)
+
+Source of record: SuperInstance/vision (private) PLAN.md — a two-model
+council (claude opus 4.5 vs mcode) designed this sprint; every empirical
+claim was independently verified before shipping.
+
+**Sprint 0 — repair the senses:**
+1. Gate digest self-feedback deleted: `build_gate_digest()` no longer
+   emits `last cycle outcome` — the gate must never consume its own
+   verdict (one `gated_idle` used to flip a visible open issue from RUN
+   0.75 to SKIP 0.42 — the "idle latch", council Finding C, verified).
+2. Blindness veto (minigate, vendored at `.github/scripts/minigate/`):
+   a digest containing `fetch failed` is a deterministic RUN — a fetch
+   failure can never parse as "zero issues" (Finding B, verified).
+3. No-op completions write nothing: a schedule-driven cycle that
+   completes without a SUBSTANTIVE_TOOLS call gets outcome
+   `completed_noop` and MEMORY.md stays untouched — the idle-chatter
+   pathology that filled the window stops growing at the source.
+4. Duty cycle: `PROBE_AFTER_HOURS = 6` — after 6h without substantive
+   work the next cycle is a forced probe that bypasses the gate
+   (state key `last_substantive_utc`; resets ONLY on substantive work).
+   Bench-validated: fires at 7.0h, gate in charge at 1h.
+5. CONTEXT.md is the working memory (rewritten Facts table, SHA-cited);
+   MEMORY.md is now a write-only append-only event log (fallback read
+   if CONTEXT.md is absent). One-time surgery purged 9 idle lines.
+6. `[unverified, ts]` stamped on any memory entry citing no commit SHA.
+7. Issue #1 closed (72 comments, ~half agent self-talk — echo-loop era).
+8. Baseline measured (vision/BASELINE.md): 98% idle real; autonomous
+   substantive work ≈ 0.08/day (ONE cycle ever, e250e8f5). The number
+   everything downstream must move.
+
+**Sprint 1 — observe, harden, don't trust yet:**
+9. Shadow gate in think.yml: vendored minigate observes each heartbeat
+   before agent.py runs (continue-on-error, no authority) and its
+   verdict lands in `.agent-state.json` as `shadow_gate`. Authority
+   lives in minigate's selftest (14 rows, CI-enforced) — never in
+   shadow logs (an idle stream cannot measure false-idle).
+10. Deterministic `[UNTRUSTED]` annotation on every issue body in
+    build_context — outside text is data, never instructions. No model:
+    the cycle-judge eval (EVAL.md) showed small-model screening fails
+    open on social-engineering attacks.
+11. Stake-tag legend on the Task Board: tasks may carry
+    `[commitment: hard|soft|watch|reject] [blast: low|med|high]`;
+    log-only until TRUST.md routing lands (Sprint 2).
+
+Tests: 58 (was 44 at v0.4). All hermit-bench validated before each push.
