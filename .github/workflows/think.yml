@@ -132,6 +132,13 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VAULT_URL: ${{ vars.VAULT_URL }}
           SHADOW_GATE: ${{ steps.shadow.outputs.shadow_verdict }}
+          # Cloud gate (TypeSafe Jev). INERT until the repo secret
+          # TYPESAFE_API_KEY exists — with no key, decide() uses the
+          # local Ollaya path and the gate stays dormant as today.
+          # Bench: gate-replay/JEV-RESULTS.md (95% skip, $0.05/mo).
+          DECISION_URL: https://api.typesafe.ai
+          DECISION_MODEL: jev-preview
+          DECISION_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
 
       - name: Commit everything (memory, scratch, work)
         # The agent's actions only become real here: agent.py commits

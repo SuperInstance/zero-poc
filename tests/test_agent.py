@@ -612,3 +612,55 @@ class TestSprint1ContextHardening(TempCwdTestCase):
                                return_value=(None, "failed")):
             ctx = agent.build_context(None)
         self.assertNotIn("stake tags:", ctx)
+
+
+class TestTypeSafeAdapter(unittest.TestCase):
+    """TypeSafe /v1/systemone answers normalize to the Ollaya gate shape."""
+
+    def test_noul_becomes_choice_with_scaled_confidence(self):
+        out = agent.normalize_decision_answers(
+            {"q": {"type": "noul", "noul": 0.95}})
+        self.assertEqual(out["q"]["choice"], "yes")
+        self.assertAlmostEqual(out["q"]["confidence"], 0.90)
+
+    def test_noul_low_flips_and_scales(self):
+        out = agent.normalize_decision_answers(
+            {"q": {"type": "noul", "noul": 0.05}})
+        self.assertEqual(out["q"]["choice"], "no")
+        self.assertAlmostEqual(out["q"]["confidence"], 0.90)
+
+    def test_choice_passthrough_and_formula_fill(self):
+        out = agent.normalize_decision_answers(
+            {"q": {"type": "choice", "choice": "no",
+                   "probabilities": {"no": 0.9, "yes": 0.1}}})
+        self.assertEqual(out["q"]["choice"], "no")
+        self.assertAlmostEqual(out["q"]["confidence"], 0.8)
+
+    def test_empty_and_malformed_tolerated(self):
+        self.assertEqual(agent.normalize_decision_answers({}), {})
+        # junk values are dropped, not passed through — decide() then
+        # returns None and the gate fail-opens
+        self.assertEqual(agent.normalize_decision_answers(
+            {"q": "junk"}), {})
+
+    def test_decide_targets_systemone_with_key(self):
+        with mock.patch.object(agent, "DECISION_API_KEY", "k"), \
+             mock.patch.object(agent, "DECISION_URL", "https://x"), \
+             mock.patch.object(agent, "DECISION_MODEL", "jev-preview"), \
+             mock.patch("urllib.request.urlopen") as up:
+            up.return_value.__enter__.return_value.read.return_value = \
+                b'{"answers": {"q": {"type": "noul", "noul": 0.97}}}'
+            req = {}
+            up.side_effect = None
+            class R:
+                def __enter__(self): return self
+                def __exit__(self, *a): return False
+                def read(self):
+                    return b'{"answers": {"q": {"type": "noul", "noul": 0.97}}}'
+            up.return_value = R()
+            answers = agent.decide({"q": {"type": "noul",
+                                          "instructions": "x"}}, "state")
+            sent = up.call_args[0][0]
+            self.assertIn("/v1/systemone", sent.full_url)
+            self.assertEqual(sent.get_header("Authorization"), "Bearer k")
+            self.assertEqual(answers["q"]["choice"], "yes")
