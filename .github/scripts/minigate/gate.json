@@ -1,0 +1,25 @@
+{
+ "features": [
+  "bias",
+  "n_tasks",
+  "has_task",
+  "n_telegram",
+  "n_issues",
+  "has_issue",
+  "issues_unknown",
+  "stale_task",
+  "outcome_error"
+ ],
+ "weights": {
+  "bias": -1.3045,
+  "n_tasks": 0.8531,
+  "has_task": 1.5221,
+  "n_telegram": 0.0,
+  "n_issues": 1.5552,
+  "has_issue": 0.7619,
+  "issues_unknown": -1.3679,
+  "stale_task": -1.215,
+  "outcome_error": 1.0561
+ },
+ "threshold": 0.5
+}
