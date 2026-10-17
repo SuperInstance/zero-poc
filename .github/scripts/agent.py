@@ -790,7 +790,7 @@ def run_agent_loop(task_description=None, max_iterations=None):
     if (DECISION_URL and not task_description and not forced_probe
             and not gate_says_work()):
         outcome = "gated_idle"
-        save_state({
+        state = {
             "schema": 1,
             "started_utc": started_utc,
             "task": "",
@@ -798,7 +798,13 @@ def run_agent_loop(task_description=None, max_iterations=None):
             "iterations_used": 0,
             "last_substantive_utc": next_substantive_ts(
                 prev, False, started_utc),
-        })
+        }
+        # Sprint-1 shadow gate: record what minigate WOULD have decided.
+        # Observation only — nothing reads this back yet, and it is absent
+        # unless think.yml set it, so an un-gated run is byte-identical.
+        if os.environ.get("SHADOW_GATE"):
+            state["shadow_gate"] = os.environ["SHADOW_GATE"]
+        save_state(state)
         log("Idle gate: nothing actionable — LLM skipped this cycle")
         return
 
@@ -910,7 +916,7 @@ def run_agent_loop(task_description=None, max_iterations=None):
 
     # Every non-crash exit path (done / llm_error / max_iterations) flows
     # through here — one place to persist the cycle's vital signs.
-    save_state({
+    state = {
         "schema": 1,
         "started_utc": started_utc,
         "task": (task_description or "")[:500],
@@ -918,7 +924,12 @@ def run_agent_loop(task_description=None, max_iterations=None):
         "iterations_used": iterations_used,
         "last_substantive_utc": next_substantive_ts(
             prev, substantive or bool(task_description), started_utc),
-    })
+    }
+    # Sprint-1 shadow gate: what minigate WOULD have decided this cycle.
+    # Log-only — agent.py never acts on it. Absent unless think.yml set it.
+    if os.environ.get("SHADOW_GATE"):
+        state["shadow_gate"] = os.environ["SHADOW_GATE"]
+    save_state(state)
     log("Agent loop complete")
 
 

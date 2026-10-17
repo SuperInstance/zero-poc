@@ -69,12 +69,69 @@ jobs:
             | jq -r '.value')
           echo "token=${OIDC_TOKEN}" >> "$GITHUB_OUTPUT"
 
+      - name: Shadow gate (observe only — never skips a cycle)
+        # Sprint 1: minigate runs here, BEFORE the agent, and records what it
+        # WOULD have decided. It has no authority. The verdict reaches exactly
+        # one place — .agent-state.json, via SHADOW_GATE — and this step
+        # cannot stop the agent below it: no branch, no `if:`, no exit code,
+        # and continue-on-error. Nothing downstream reads the verdict yet.
+        # Authority is not earned from a shadow log either: an idle stream
+        # contains no false-idle to measure, which is why skip authority
+        # lives upstream in minigate's selftest, not here.
+        id: shadow
+        continue-on-error: true
+        env:
+          OIDC_TOKEN: ${{ steps.oidc.outputs.token }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VAULT_URL: ${{ vars.VAULT_URL }}
+        run: |
+          RAW=$(python3 - <<'PYEOF'
+          import subprocess, sys
+          sys.path.insert(0, ".github/scripts")
+          out = ""
+          try:
+              import agent
+              # Exactly the digest agent.py would build for itself right now.
+              digest = agent.build_gate_digest()
+              print(digest, file=sys.stderr)  # keep the digest off stdout
+              # Same invocation the upstream selftest uses: digest as argv,
+              # cwd = the gate's own directory. gate.py loads gate.json by the
+              # RELATIVE path "gate.json", so without cwd it raises
+              # FileNotFoundError and every cycle silently falls back to RUN.
+              r = subprocess.run(
+                  [sys.executable, "gate.py", digest],
+                  cwd=".github/scripts/minigate",
+                  capture_output=True, text=True, timeout=60)
+              # Parse stdout ONLY. A traceback on stderr could contain the
+              # literal "SKIP" and fake a skip verdict out of a crash.
+              out = r.stdout
+              if r.stderr.strip():
+                  print("gate stderr: " + r.stderr.strip()[-300:],
+                        file=sys.stderr)
+          except Exception:
+              out = ""
+          # gate.py prints "SKIP (idle)", "RUN  (work)" or "RUN  (blind)".
+          # Anything unrecognised -> RUN. This step observes; it never skips.
+          print("RUN_BLIND" if "(blind)" in out else
+                "SKIP" if "SKIP" in out else "RUN")
+          PYEOF
+          )
+          # agent.log() writes to stdout, so the verdict is the LAST line.
+          VERDICT=$(printf '%s\n' "$RAW" | tail -n 1)
+          case "$VERDICT" in
+            RUN|SKIP|RUN_BLIND) ;;
+            *) VERDICT=RUN ;;
+          esac
+          echo "shadow verdict: $VERDICT (agent still runs — observation only)"
+          echo "shadow_verdict=$VERDICT" >> "$GITHUB_OUTPUT"
+
       - name: Run agent loop
         run: python3 .github/scripts/agent.py --task "${{ inputs.task }}" --max-iterations ${{ inputs.max_iterations || '10' }}
         env:
           OIDC_TOKEN: ${{ steps.oidc.outputs.token }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VAULT_URL: ${{ vars.VAULT_URL }}
+          SHADOW_GATE: ${{ steps.shadow.outputs.shadow_verdict }}
 
       - name: Commit everything (memory, scratch, work)
         # The agent's actions only become real here: agent.py commits
