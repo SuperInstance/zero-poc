@@ -64,6 +64,9 @@ LOCAL_LLM_MODEL = os.environ.get("LOCAL_LLM_MODEL", "local")
 # explicit --task always bypasses it (a human asked; don't second-guess).
 DECISION_URL = os.environ.get("DECISION_URL", "")
 DECISION_MODEL = os.environ.get("DECISION_MODEL", "laya")
+# TypeSafe Jev (hosted): set DECISION_URL=https://api.typesafe.ai + this key
+# (GitHub secret in think.yml; vault-side later). Empty = local Ollaya path.
+DECISION_API_KEY = os.environ.get("DECISION_API_KEY", "")
 GATE_CONFIDENCE_THRESHOLD = 0.6
 
 MAX_ITERATIONS = 10
@@ -444,33 +447,66 @@ def execute_tool(tool_call):
         return False, f"Error: {e}"
 
 
+def normalize_decision_answers(answers):
+    """Unify Ollaya and TypeSafe answer shapes for the gate.
+
+    TypeSafe noul answers carry a probability, not a choice: convert to
+    the Ollaya shape with confidence |2p-1| (TypeSafe's own docs
+    recommend exactly this scaling, and it keeps GATE_CONFIDENCE_THRESHOLD
+    semantics comparable across providers: 0.6 ⇔ p ≥ 0.8).
+    """
+    out = {}
+    for qid, a in (answers or {}).items():
+        if not isinstance(a, dict):
+            continue
+        if "noul" in a and "choice" not in a:
+            p = a["noul"]
+            out[qid] = {"choice": "yes" if p > 0.5 else "no",
+                        "confidence": abs(2 * p - 1)}
+        elif "choice" in a and "confidence" not in a and "probabilities" in a:
+            probs = a["probabilities"]
+            p_max = max(probs.values()) if probs else 0.0
+            n = max(1, len(probs))
+            out[qid] = {**a, "confidence":
+                        max(0.0, (p_max - 1 / n) / (1 - 1 / n))}
+        else:
+            out[qid] = a
+    return out
+
+
 def decide(questions, state):
     """One System-1 decision via a TypeSafe-compatible endpoint.
 
-    Targets Ollaya's POST /v1/decisions (contract verified against
-    Ollaya 0.13, see docs/system1.md):
-      {"model", "state", "questions": {id: {type, instructions, criteria}}}
-      → {"answers": {id: {choice, confidence, probabilities, ...}}}
-    Returns the answers dict, or None on ANY failure — callers must treat
-    None as "no decision" and fall back to their System-2 path.
+    Two providers, one shape:
+      - Ollaya (local): POST {DECISION_URL}/v1/decisions, no auth.
+      - TypeSafe Jev (hosted): POST https://api.typesafe.ai/v1/systemone
+        with Bearer auth — set DECISION_URL=https://api.typesafe.ai,
+        DECISION_API_KEY=<vault/secret>, DECISION_MODEL=jev-preview.
+        Bench-verified 2026-10-17 (gate-replay/JEV-RESULTS.md): 95%
+        idle-skip, 0.25s median, ~$0.05/month at 96 beats/day.
+    Returns the normalized answers dict, or None on ANY failure —
+    callers must treat None as "no decision" and fall back to their
+    System-2 path.
     """
     import urllib.request
 
     payload = {"model": DECISION_MODEL, "state": state, "questions": questions}
-    req = urllib.request.Request(
-        f"{DECISION_URL.rstrip('/')}/v1/decisions",
-        data=json.dumps(payload).encode(),
-        headers={
-            "Content-Type": "application/json",
-            "User-Agent": "purplepincher-zero/1.0 (+https://github.com/purplepincher/zero)",
-        },
-        method="POST",
-    )
+    headers = {
+        "Content-Type": "application/json",
+        "User-Agent": "purplepincher-zero/1.0 (+https://github.com/purplepincher/zero)",
+    }
+    if DECISION_API_KEY:
+        endpoint = f"{DECISION_URL.rstrip('/')}/v1/systemone"
+        headers["Authorization"] = f"Bearer {DECISION_API_KEY}"
+    else:
+        endpoint = f"{DECISION_URL.rstrip('/')}/v1/decisions"
+    req = urllib.request.Request(endpoint, data=json.dumps(payload).encode(),
+                                 headers=headers, method="POST")
     try:
         with urllib.request.urlopen(req, timeout=10) as resp:
             data = json.loads(resp.read().decode())
-        answers = data.get("answers")
-        return answers if isinstance(answers, dict) else None
+        answers = normalize_decision_answers(data.get("answers"))
+        return answers if isinstance(answers, dict) and answers else None
     except Exception as e:
         log(f"Decision call failed ({DECISION_URL}): {e}", "WARN")
         return None
