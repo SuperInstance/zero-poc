@@ -1,9 +1,9 @@
 {
   "schema": 1,
-  "started_utc": "2026-10-17T22:59:34.439073+00:00",
+  "started_utc": "2026-10-18T00:55:32.636082+00:00",
   "task": "",
   "outcome": "completed_noop",
-  "iterations_used": 4,
+  "iterations_used": 2,
   "last_substantive_utc": "2026-10-17T08:36:40.413902+00:00",
   "shadow_gate": "RUN"
 }
