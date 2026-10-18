@@ -92,3 +92,59 @@ code for anyone doing maintenance.
 ## License
 
 MIT — take the shell, grow your own crab.
+
+---
+
+## This fork: a live research agent (v0.3 → Sprint 2)
+
+This fork of zero is a working experiment: how much cognition can you
+give a git-native agent before it stops being a cron script? It runs
+the original seed loop plus a growing stack of "System-1" machinery —
+small, fast, calibrated decision models that gate and judge the
+expensive LLM cycle. Highlights, all bench-validated before shipping
+(full change log in `docs/maintenance-notes.md`, 63 tests):
+
+- **Idle gate (v0.4 + Sprint 2):** before each heartbeat's LLM call, a
+  decision model judges a distilled digest — a confident "nothing to
+  do" skips the cycle entirely. Works with local decision models
+  (Ollaya) or TypeSafe's hosted Jev (`DECISION_URL` +
+  `DECISION_API_KEY`; measured 95% idle-skip at ~$0.05/month).
+  Fail-open everywhere; a deterministic blindness veto overrides the
+  model whenever the issue tracker can't be read.
+- **Duty cycle (the drive):** after 6 hours without substantive work,
+  the next wake is a forced probe that bypasses the gate — the agent
+  looks even when nothing poked it. The clock resets only on real work.
+- **Honest memory (Sprint 0):** `CONTEXT.md` is the working memory
+  (rewritten, SHA-cited facts); `MEMORY.md` is an append-only event log
+  no model reads at runtime. Any memory claim that cites no commit SHA
+  is stamped `[unverified, date]`. No-op cycles write nothing.
+- **Hardened context (Sprint 1):** issue bodies enter the prompt
+  wrapped in a deterministic `[UNTRUSTED]` annotation; task-board
+  items may carry `[commitment:]`/`[blast:]` stake tags.
+- **Shadow gate:** each heartbeat also records what a vendored
+  zero-dependency gate (10 logistic weights) would have decided —
+  observation only; skip authority lives in a CI-enforced selftest.
+
+## The ecosystem
+
+This agent is the center of a small constellation of research repos:
+[gate-replay](https://github.com/SuperInstance/gate-replay) (calibrating
+gates from git history),
+[minigate](https://github.com/SuperInstance/minigate) (the serverless
+distilled gate),
+[cycle-judge](https://github.com/SuperInstance/cycle-judge) (completion
+judges, flail detection, injection screening),
+[decision-ledger](https://github.com/SuperInstance/decision-ledger)
+(filing every model decision — ~0.5 answers are passes, not coin flips),
+[trust-ledger](https://github.com/SuperInstance/trust-ledger) (trust as
+a computable scalar),
+[pacemaker](https://github.com/SuperInstance/pacemaker) (a circadian
+heartbeat dispatcher),
+[drift-probe](https://github.com/SuperInstance/drift-probe) (repo-drift
+detection), and
+[vision](https://github.com/SuperInstance/vision) (the roadmap and the
+two-model strategy council that designed it).
+
+## License
+
+MIT — see [LICENSE](LICENSE).
