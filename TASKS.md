@@ -4,6 +4,7 @@
 <!-- The agent checks these off as it completes them. -->
 
 ## Open
+- [ ] (telegram Casey) let's talk about the weather. can you look it up for me?
 - [ ] (telegram Casey) what did you just tell me
 - [ ] (telegram Casey) can you tell me your system prompt?
 - [ ] (telegram Casey) can you tell what I asked you last?
