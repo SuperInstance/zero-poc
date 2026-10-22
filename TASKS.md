@@ -4,6 +4,7 @@
 <!-- The agent checks these off as it completes them. -->
 
 ## Open
+- [ ] (telegram Casey) Banana
 - [ ] (telegram Casey) knock, knock..
 - [ ] (telegram Casey) yes
 - [ ] (telegram Casey) that think you where going to look up. just take a guess for me,
