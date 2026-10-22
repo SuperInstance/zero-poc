@@ -17,6 +17,17 @@
 #   window while TASKS.md is read fresh every cycle. The think LLM triages
 #   them like any other task. (Previously: MEMORY-only logging, which let
 #   Telegram instructions silently evaporate — docs/maintenance-notes.md.)
+# - CONVERSATION RECORD (v0.4): the dialogue itself is a first-class
+#   thing with its own home: `conversation/`. Every inbound message is
+#   recorded in FULL at `conversation/inputs/<turn-stem>.md` and every
+#   reply at `conversation/outputs/<turn-stem>.md` — same stem, so a
+#   turn pairs by filename. The reply is committed BEFORE the bridge
+#   sends it (memory-first, symmetric with the inbound log): the record
+#   is primary, the send is delivery. Before v0.4 the replies existed
+#   only in Telegram and the ephemeral runner /tmp — the repo held one
+#   side of its own conversation. MEMORY.md stays the digest and
+#   TASKS.md the routing; `conversation/` is the transcript, kept so
+#   other processes can build on the dialogue itself.
 # - The bridge URL fallback below is hardcoded; the override is the repo
 #   variable TELEGRAM_BRIDGE_URL. Moving the bridge means updating both
 #   (plus VAULT.md-style docs).
@@ -88,8 +99,26 @@ jobs:
           else:
               content = f"# TASKS.md — Task Board\n\n## Open\n{line}\n"
           p.write_text(content)
+          # v0.4: record the FULL inbound message as a conversation input
+          # (TASKS.md above keeps only a flattened 200-char routing copy).
+          # The turn stem pairs this input with its reply in
+          # conversation/outputs/ — see conversation/README.md.
+          import datetime
+          raw = os.environ.get("TG_TEXT", "").strip()
+          stamp = datetime.datetime.now(datetime.timezone.utc)
+          stem = stamp.strftime("%Y-%m-%dT%H%M%SZ")
+          indir = pathlib.Path("conversation/inputs")
+          indir.mkdir(parents=True, exist_ok=True)
+          base, n = stem, 1
+          while (indir / f"{base}.md").exists():
+              n += 1
+              base = f"{stem}-{n}"
+          header = f"---\nfrom: {user}\nat: {stamp.strftime('%Y-%m-%dT%H:%M:%SZ')}\nvia: telegram\nturn: {base}\n---\n\n"
+          (indir / f"{base}.md").write_text(header + raw + "\n")
+          pathlib.Path("/tmp/conv_stem.txt").write_text(base)
           PY
-          git add MEMORY.md TASKS.md
+          echo "CONV_STEM=$(cat /tmp/conv_stem.txt)" >> "$GITHUB_ENV"
+          git add MEMORY.md TASKS.md conversation/inputs
           git diff --staged --quiet || (git commit -m "telegram: message from ${TG_USER}" && git push)
 
       - name: Think via vault
@@ -123,6 +152,30 @@ jobs:
           fi
           printf '%s' "$REPLY" | head -c 4000 > /tmp/pincher_reply.txt
           echo "reply saved ($(wc -c < /tmp/pincher_reply.txt) bytes)"
+
+      - name: Record reply
+        # v0.4: commit the reply to conversation/outputs/<same stem>.md
+        # BEFORE the bridge sends it — memory-first, symmetric with the
+        # inbound log. The record is primary; the send is delivery. If
+        # the bridge step then fails, the output file still stands as
+        # what the agent said, and the failure is the bridge's to own.
+        run: |
+          git config user.name "zero"
+          git config user.email "zero@purplepincher.org"
+          python3 - <<'PY'
+          import os, pathlib, datetime
+          stem = os.environ.get("CONV_STEM", "").strip()
+          if not stem:
+              stem = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H%M%SZ")
+          reply = pathlib.Path("/tmp/pincher_reply.txt").read_text().strip()
+          at = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+          outdir = pathlib.Path("conversation/outputs")
+          outdir.mkdir(parents=True, exist_ok=True)
+          header = f"---\nfrom: zero\nat: {at}\nvia: telegram\nturn: {stem}\nin-reply-to: inputs/{stem}.md\n---\n\n"
+          (outdir / f"{stem}.md").write_text(header + reply + "\n")
+          PY
+          git add conversation/outputs
+          git diff --staged --quiet || (git commit -m "telegram: reply (${CONV_STEM})" && git push)
 
       - name: Reply via bridge
         env:

@@ -117,6 +117,14 @@ every later step's environment.
   (≤4000 chars) to the bridge's `/send`, which delivers it via the
   Telegram API. The agent never touches the Telegram API or bot token
   directly.
+- **The conversation record (v0.4)**: the dialogue itself lives in
+  `conversation/` — the full inbound text at
+  `conversation/inputs/<turn-stem>.md`, the reply at
+  `conversation/outputs/<turn-stem>.md`, paired by filename. The reply
+  is committed *before* the bridge send (memory-first, symmetric with
+  the inbound log). `MEMORY.md` remains the digest and `TASKS.md` the
+  routing; `conversation/` is the transcript other processes build on.
+  Contract: `conversation/README.md`.
 
 ## The brain — `.github/scripts/agent.py`
 
