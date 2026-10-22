@@ -626,7 +626,7 @@ def build_context(task_description=None):
     """Build the full context for the LLM.
 
     This defines the agent's ENTIRE world-view each iteration. Included:
-    ONBOARDING.md[:5000] (identity + the mechanism), MEMORY.md[-2000:]
+    ONBOARDING.md[:6500] (identity + the mechanism), MEMORY.md[-2000:]
     (memory digest),
     the task, TASKS.md[:2000], TOOLS.md[:2000] (the tools & skills
     index), open issue bodies[:800 each] (first 10,
@@ -640,10 +640,10 @@ def build_context(task_description=None):
     parts = []
 
     # Identity (+ the mechanism — ONBOARDING.md grew a "how I actually
-    # work" section; the slice grew with it so the tail (principles,
+    # work" section; the slice grows with it so the tail (principles,
     # alignment) is not cut off mid-file)
     try:
-        parts.append("## Who I Am\n" + Path("ONBOARDING.md").read_text()[:5000])
+        parts.append("## Who I Am\n" + Path("ONBOARDING.md").read_text()[:6500])
     except:
         parts.append("## Who I Am\nI am a Purple Pincher zero — a GitHub-native agent.")
 

@@ -26,7 +26,7 @@ intent; a human reviews; the tool does not execute.
 | `write_file` | Write repo files (protected files excluded) | auto |
 | `write_workflow` | Change `.github/workflows/` — my own reflexes | deferred |
 | `delete_file` | Delete a repo file | deferred |
-| `run_shell` | Run a shell command in the Actions runner sandbox | auto |
+| `run_shell` | Run a shell command in the Actions runner sandbox — the runner has outbound internet, so `curl` reaches the world | auto |
 | `run_tests` | Run the repo test suite | auto |
 | `git_commit` | Commit changes in the working tree | auto |
 | `git_push_branch` | Push a branch | auto |
@@ -48,6 +48,8 @@ the repo allowlist, and supplies the secret. I never hold a key.
 | Service / action | What it does | Used by |
 |---|---|---|
 | `llm` / `complete` | One rented LLM completion — my thinking itself | think loop, telegram & react workflows |
+| Conversation memory | The reply call is assembled from the record: brief + exact repo identity + `CONTEXT.md` digest + the last 10 paired turns from `conversation/` — the voice hears with memory, not amnesiac | telegram workflow |
+| The internet | Reachable via the think loop's `run_shell` (runner has outbound access) and the vault APIs. The Telegram voice cannot browse mid-reply; a request to look something up rides `TASKS.md` to the loop | think loop |
 | `github` / `list_issues` | Fetch open issues (context assembly; `gh` fallback) | think loop |
 | `github` / `comment_issue`, `create_issue`, `get_repo` | GitHub API access | think loop (vault tier) |
 | `api_cloudflare` | Cloudflare API access | think loop (vault tier) |

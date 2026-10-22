@@ -125,6 +125,13 @@ every later step's environment.
   the inbound log). `MEMORY.md` remains the digest and `TASKS.md` the
   routing; `conversation/` is the transcript other processes build on.
   Contract: `conversation/README.md`.
+- **The voice's memory (v0.6)**: an Assemble-context step builds the
+  reply call's messages from the record — the mechanical brief, the
+  exact repo identity (from `github.repository`, never hardcoded), a
+  `CONTEXT.md` digest, and the last 10 paired turns from
+  `conversation/` (unpaired inputs ride as bare user turns) — then
+  the Think step slurps the file, falling back to the two-message
+  shape if assembly produced nothing.
 
 ## The brain — `.github/scripts/agent.py`
 
@@ -132,7 +139,7 @@ A self-contained ReAct loop (Reason + Act). Only `think.yml` invokes it.
 Walkthrough of `run_agent_loop()`:
 
 1. **Observe** — `build_context()` assembles the agent's world, fresh each
-   iteration: `ONBOARDING.md`[:5000] (identity + the mechanism),
+   iteration: `ONBOARDING.md`[:6500] (identity + the mechanism),
    `MEMORY.md`[-2000:]
    (memory), the task (from `workflow_dispatch` input, else "check TASKS.md
    and issues"), `TASKS.md`[:2000] (board), `TOOLS.md`[:2000] (the agent's

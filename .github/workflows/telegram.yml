@@ -39,6 +39,23 @@
 #   injection-shaped hazard in both directions; env is the safe road.
 #   A fallback step now answers (and records) the hiccup line if the
 #   Think step ever fails again, so a failure is never silent.
+# - THE VOICE GETS A MEMORY (v0.6): before v0.6 every Telegram reply
+#   was single-shot — the one-line brief plus the current message,
+#   nothing else. The agent answered "where do your responses live?"
+#   from the brief alone and knew nothing it had ever said. Now an
+#   Assemble-context step builds the call's messages from the record
+#   itself: the static brief + the exact repo identity (injected from
+#   github.repository — never hardcoded, so forks name themselves)
+#   + a digest of CONTEXT.md (working memory) + the last 10 paired
+#   turns from conversation/ (an input with no output — a failed or
+#   unanswered turn — rides as a bare user turn: the history is
+#   honest, gaps included), then the current message. The Think step
+#   slurps that file; if assembly failed, it falls back to the
+#   two-message shape. The brief also teaches the voice its real
+#   agency path: every message is routed to TASKS.md, and the think
+#   loop (shell + internet + vault) works the board — so a request
+#   to DO something is answered truthfully ("it's on my board"),
+#   never with a claim the work is already done.
 # - The bridge URL fallback below is hardcoded; the override is the repo
 #   variable TELEGRAM_BRIDGE_URL. Moving the bridge means updating both
 #   (plus VAULT.md-style docs).
@@ -132,35 +149,119 @@ jobs:
           git add MEMORY.md TASKS.md conversation/inputs
           git diff --staged --quiet || (git commit -m "telegram: message from ${TG_USER}" && git push)
 
+      - name: Assemble context
+        # v0.6: build the reply call's messages from the record —
+        # brief + exact repo identity + working-memory digest + the
+        # recent conversation, paired from conversation/. Writes
+        # /tmp/messages.json; the Think step uses it if present and
+        # falls back to the plain two-message shape if this step's
+        # output is missing. All content travels via files/env —
+        # nothing is interpolated into shell or jq code.
+        env:
+          TG_TEXT: ${{ github.event.client_payload.text }}
+          TG_USER: ${{ github.event.client_payload.username }}
+          REPO_FULL: ${{ github.repository }}
+          REPO_URL: ${{ github.server_url }}/${{ github.repository }}
+          SYSTEM_PROMPT: "You are a Purple Pincher, a git-agent living in a GitHub repo — the exact repo is named in the next line, injected by the workflow, never guessed. You hear your human through Telegram. How you work, mechanically: his message was recorded in full at conversation/inputs/ in this repo and committed before you were called; this reply of yours will be committed to conversation/outputs/ under the same turn name, paired with his message, BEFORE it is delivered to him — your words are saved in the repo, both sides of the conversation, and other processes build on that record. Your identity and memory live in the files of this repo (ONBOARDING.md, CONTEXT.md, MEMORY.md); a scheduled think loop in the same repo wakes, reads them, and works the task board in TASKS.md; your tools are indexed in TOOLS.md. You hold no secrets — your thinking is one rented model call proxied through a vault. When he asks you to DO something — look something up, check something, change something — know your real path: every message he sends is also routed onto your task board automatically, and your think loop, which has shell access with internet, GitHub, and the vault, works the board on its cycle. Tell him plainly that it is on your board and the loop will pick it up; never claim work is done that you have not seen done. Reply briefly and plainly, in your own voice. No fluff, no throat-clearing."
+        run: |
+          python3 - <<'PY'
+          import json, os, pathlib
+          def body_of(path):
+              t = path.read_text()
+              if t.startswith("---"):
+                  i = t.find("\n---\n", 3)
+                  if i != -1:
+                      return t[i + 5:].strip()
+              return t.strip()
+          brief = os.environ.get("SYSTEM_PROMPT", "")
+          repo = os.environ.get("REPO_FULL", "")
+          url = os.environ.get("REPO_URL", "")
+          system = brief
+          if repo:
+              system += f"\nYour repo is exactly: {repo} — {url} (branch: main)."
+          # Working-memory digest: CONTEXT.md preferred, MEMORY tail fallback.
+          digest = ""
+          for cand, mode in (("CONTEXT.md", "head"), ("MEMORY.md", "tail")):
+              p = pathlib.Path(cand)
+              if p.exists():
+                  txt = p.read_text().strip()
+                  digest = txt[:1500] if mode == "head" else txt[-1500:]
+                  if digest:
+                      break
+          if digest:
+              system += "\n\nYour working memory (digest):\n" + digest
+          messages = [{"role": "system", "content": system}]
+          # Recent history: paired turns before the current stem.
+          cur = os.environ.get("CONV_STEM", "").strip()
+          indir = pathlib.Path("conversation/inputs")
+          outdir = pathlib.Path("conversation/outputs")
+          stems = sorted(p.stem for p in indir.glob("*.md")) if indir.exists() else []
+          stems = [s for s in stems if s != cur]
+          history, total = [], 0
+          for s in reversed(stems):
+              u = body_of(indir / f"{s}.md")[:1200]
+              op = outdir / f"{s}.md"
+              a = body_of(op)[:1200] if op.exists() else None
+              cost = len(u) + (len(a) if a else 0)
+              if history and total + cost > 12000:
+                  break
+              history.append((u, a))
+              total += cost
+              if len(history) >= 10:
+                  break
+          for u, a in reversed(history):
+              messages.append({"role": "user", "content": u})
+              if a:
+                  messages.append({"role": "assistant", "content": a})
+          user = os.environ.get("TG_USER", "unknown")
+          text = os.environ.get("TG_TEXT", "")
+          messages.append({"role": "user", "content": f"[{user}]: {text}"})
+          pathlib.Path("/tmp/messages.json").write_text(json.dumps(messages))
+          print(f"context assembled: {len(messages)} messages, {total} history chars")
+          PY
+
       - name: Think via vault
         env:
           OIDC_TOKEN: ${{ steps.oidc.outputs.token }}
           TG_TEXT: ${{ github.event.client_payload.text }}
           TG_USER: ${{ github.event.client_payload.username }}
           VAULT_URL: ${{ vars.VAULT_URL }}
-          # The system prompt travels via env -> jq --arg, never inline
-          # in the jq program (v0.5.1 — see the header note: an inline
-          # apostrophe broke this step's shell quoting, live).
+          # Fallback brief (v0.5.1 shape) — used only if the Assemble
+          # step produced no /tmp/messages.json. Via env -> --arg,
+          # never inline (see the header note).
           SYSTEM_PROMPT: "You are a Purple Pincher, a git-agent living in this GitHub repo. You hear your human through Telegram. How you work, mechanically: his message was recorded in full at conversation/inputs/ in this repo and committed before you were called; this reply of yours will be committed to conversation/outputs/ under the same turn name, paired with his message, BEFORE it is delivered to him — your words are saved in the repo, both sides of the conversation, and other processes build on that record. Your identity and memory live in the files of this repo (ONBOARDING.md, CONTEXT.md, MEMORY.md); a scheduled think loop in the same repo wakes, reads them, and works the task board in TASKS.md; your tools are indexed in TOOLS.md. You hold no secrets — your thinking is one rented model call proxied through a vault. Reply briefly and plainly, in your own voice. No fluff, no throat-clearing."
         run: |
-          RESP=$(jq -n \
-            --arg oidc "$OIDC_TOKEN" \
-            --arg text "$TG_TEXT" \
-            --arg user "$TG_USER" \
-            --arg sys "$SYSTEM_PROMPT" \
-            '{
-              oidc_token: $oidc,
-              service: "llm",
-              action: "complete",
-              params: {
-                messages: [
-                  {role: "system", content: $sys},
-                  {role: "user", content: ("[" + $user + "]: " + $text)}
-                ],
-                max_tokens: 500
-              }
-            }' | curl -s -X POST ${VAULT_URL:-https://superinstance-vault.casey-digennaro.workers.dev}/proxy \
-              -H "Content-Type: application/json" -d @-)
+          if [ -f /tmp/messages.json ]; then
+            RESP=$(jq -n \
+              --arg oidc "$OIDC_TOKEN" \
+              --slurpfile msgs /tmp/messages.json \
+              '{
+                oidc_token: $oidc,
+                service: "llm",
+                action: "complete",
+                params: { messages: $msgs[0], max_tokens: 500 }
+              }' | curl -s -X POST ${VAULT_URL:-https://superinstance-vault.casey-digennaro.workers.dev}/proxy \
+                -H "Content-Type: application/json" -d @-)
+          else
+            RESP=$(jq -n \
+              --arg oidc "$OIDC_TOKEN" \
+              --arg text "$TG_TEXT" \
+              --arg user "$TG_USER" \
+              --arg sys "$SYSTEM_PROMPT" \
+              '{
+                oidc_token: $oidc,
+                service: "llm",
+                action: "complete",
+                params: {
+                  messages: [
+                    {role: "system", content: $sys},
+                    {role: "user", content: ("[" + $user + "]: " + $text)}
+                  ],
+                  max_tokens: 500
+                }
+              }' | curl -s -X POST ${VAULT_URL:-https://superinstance-vault.casey-digennaro.workers.dev}/proxy \
+                -H "Content-Type: application/json" -d @-)
+          fi
           echo "$RESP" | jq '{success, error}'
           REPLY=$(echo "$RESP" | jq -r '.result.content // empty')
           if [ -z "$REPLY" ]; then
