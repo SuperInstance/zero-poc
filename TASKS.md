@@ -4,6 +4,7 @@
 <!-- The agent checks these off as it completes them. -->
 
 ## Open
+- [ ] (telegram Casey) Are you aware of what you save your responses?
 - [ ] (telegram Casey) Will you save your response?
 - [ ] (telegram Casey) are you awake?
 ## In Progress
