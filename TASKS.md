@@ -4,6 +4,7 @@
 <!-- The agent checks these off as it completes them. -->
 
 ## Open
+- [ ] (telegram Casey) can you tell what I asked you last?
 - [ ] (telegram Casey) so where do your resposes life specifically
 - [ ] (telegram Casey) so where exactly do your responses live?
 - [ ] (telegram Casey) Are you aware of what you save your responses?
