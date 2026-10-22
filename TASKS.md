@@ -4,8 +4,7 @@
 <!-- The agent checks these off as it completes them. -->
 
 ## Open
-<!-- Add tasks here -->
-
+- [ ] (telegram Casey) are you awake?
 ## In Progress
 <!-- The agent moves tasks here when it starts them -->
 
