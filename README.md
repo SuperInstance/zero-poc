@@ -81,6 +81,7 @@ docs/                 architecture.md, maintenance-notes.md, system1.md, plugins
 AGENTS.md             operator's manual
 ONBOARDING.md         first-boot checklist
 TASKS.md              the task board
+TOOLS.md              my tools & skills index (read by the think loop every cycle)
 MEMORY.md             long-term memory (committed, rewindable)
 conversation/         the dialogue itself — inputs/ (the human) and outputs/ (the agent), paired by turn stem
 VAULT.md              how the vault works (it holds no secrets)

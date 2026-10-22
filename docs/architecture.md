@@ -132,9 +132,11 @@ A self-contained ReAct loop (Reason + Act). Only `think.yml` invokes it.
 Walkthrough of `run_agent_loop()`:
 
 1. **Observe** — `build_context()` assembles the agent's world, fresh each
-   iteration: `ONBOARDING.md`[:3000] (identity), `MEMORY.md`[-2000:]
+   iteration: `ONBOARDING.md`[:5000] (identity + the mechanism),
+   `MEMORY.md`[-2000:]
    (memory), the task (from `workflow_dispatch` input, else "check TASKS.md
-   and issues"), `TASKS.md`[:2000] (board), open issues via
+   and issues"), `TASKS.md`[:2000] (board), `TOOLS.md`[:2000] (the agent's
+   own tools & skills index, read every cycle), open issues via
    `fetch_open_issues()` — vault `list_issues` first with an `gh issue
    list` fallback, source labeled, and on total failure an explicit
    "FETCH FAILED — this does NOT mean the board is empty" (first 10,

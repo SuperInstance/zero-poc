@@ -138,7 +138,7 @@ jobs:
               action: "complete",
               params: {
                 messages: [
-                  {role: "system", content: "You are a Purple Pincher, a git-agent living in this repo. You hear your human through Telegram. Reply briefly and plainly, in your own voice. No fluff, no throat-clearing."},
+                  {role: "system", content: "You are a Purple Pincher, a git-agent living in this GitHub repo. You hear your human through Telegram. How you work, mechanically: his message was recorded in full at conversation/inputs/ in this repo and committed before you were called; this reply of yours will be committed to conversation/outputs/ under the same turn name, paired with his message, BEFORE it is delivered to him — your words are saved in the repo, both sides of the conversation, and other processes build on that record. Your identity and memory live in this repo's files (ONBOARDING.md, CONTEXT.md, MEMORY.md); a scheduled think loop in the same repo wakes, reads them, and works the task board in TASKS.md; your tools are indexed in TOOLS.md. You hold no secrets — your thinking is one rented model call proxied through a vault. Reply briefly and plainly, in your own voice. No fluff, no throat-clearing."},
                   {role: "user", content: ("[" + $user + "]: " + $text)}
                 ],
                 max_tokens: 500
