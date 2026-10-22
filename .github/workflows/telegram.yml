@@ -28,6 +28,17 @@
 #   side of its own conversation. MEMORY.md stays the digest and
 #   TASKS.md the routing; `conversation/` is the transcript, kept so
 #   other processes can build on the dialogue itself.
+# - PROMPT VIA ENV (v0.5.1 — a bug fix, learned live): the system
+#   prompt reaches jq as a `--arg` from the step's env, NEVER inline
+#   inside the single-quoted jq program. v0.5 inlined it, and one
+#   apostrophe ("repo's") closed the shell quote mid-program — bash
+#   rejected the whole Think step (syntax error near `('), the run
+#   failed, and the human got silence: his input stands in
+#   conversation/inputs/2026-10-22T232941Z.md with no output, the
+#   receipt of the failure. Inline prose in shell-quoted code is an
+#   injection-shaped hazard in both directions; env is the safe road.
+#   A fallback step now answers (and records) the hiccup line if the
+#   Think step ever fails again, so a failure is never silent.
 # - The bridge URL fallback below is hardcoded; the override is the repo
 #   variable TELEGRAM_BRIDGE_URL. Moving the bridge means updating both
 #   (plus VAULT.md-style docs).
@@ -127,18 +138,23 @@ jobs:
           TG_TEXT: ${{ github.event.client_payload.text }}
           TG_USER: ${{ github.event.client_payload.username }}
           VAULT_URL: ${{ vars.VAULT_URL }}
+          # The system prompt travels via env -> jq --arg, never inline
+          # in the jq program (v0.5.1 — see the header note: an inline
+          # apostrophe broke this step's shell quoting, live).
+          SYSTEM_PROMPT: "You are a Purple Pincher, a git-agent living in this GitHub repo. You hear your human through Telegram. How you work, mechanically: his message was recorded in full at conversation/inputs/ in this repo and committed before you were called; this reply of yours will be committed to conversation/outputs/ under the same turn name, paired with his message, BEFORE it is delivered to him — your words are saved in the repo, both sides of the conversation, and other processes build on that record. Your identity and memory live in the files of this repo (ONBOARDING.md, CONTEXT.md, MEMORY.md); a scheduled think loop in the same repo wakes, reads them, and works the task board in TASKS.md; your tools are indexed in TOOLS.md. You hold no secrets — your thinking is one rented model call proxied through a vault. Reply briefly and plainly, in your own voice. No fluff, no throat-clearing."
         run: |
           RESP=$(jq -n \
             --arg oidc "$OIDC_TOKEN" \
             --arg text "$TG_TEXT" \
             --arg user "$TG_USER" \
+            --arg sys "$SYSTEM_PROMPT" \
             '{
               oidc_token: $oidc,
               service: "llm",
               action: "complete",
               params: {
                 messages: [
-                  {role: "system", content: "You are a Purple Pincher, a git-agent living in this GitHub repo. You hear your human through Telegram. How you work, mechanically: his message was recorded in full at conversation/inputs/ in this repo and committed before you were called; this reply of yours will be committed to conversation/outputs/ under the same turn name, paired with his message, BEFORE it is delivered to him — your words are saved in the repo, both sides of the conversation, and other processes build on that record. Your identity and memory live in this repo's files (ONBOARDING.md, CONTEXT.md, MEMORY.md); a scheduled think loop in the same repo wakes, reads them, and works the task board in TASKS.md; your tools are indexed in TOOLS.md. You hold no secrets — your thinking is one rented model call proxied through a vault. Reply briefly and plainly, in your own voice. No fluff, no throat-clearing."},
+                  {role: "system", content: $sys},
                   {role: "user", content: ("[" + $user + "]: " + $text)}
                 ],
                 max_tokens: 500
@@ -182,6 +198,39 @@ jobs:
           TG_CHAT: ${{ github.event.client_payload.chat_id }}
           TELEGRAM_BRIDGE_URL: ${{ vars.TELEGRAM_BRIDGE_URL }}
         run: |
+          jq -n --argjson chat "$TG_CHAT" --arg text "$(cat /tmp/pincher_reply.txt)" \
+            '{chat_id: $chat, text: $text}' | \
+            curl -s -X POST ${TELEGRAM_BRIDGE_URL:-https://lobster-telegram-bridge.casey-digennaro.workers.dev}/send \
+              -H "Content-Type: application/json" -d @- | jq '{ok, error}'
+
+      - name: Fallback reply if Think failed
+        # v0.5.1: a failed Think step must never mean silence (the
+        # v0.5 quoting bug did exactly that). Record + send the same
+        # hiccup line the Think step uses for an empty LLM reply,
+        # marked in its output file as a fallback. Runs only when an
+        # earlier step failed.
+        if: failure()
+        env:
+          TG_CHAT: ${{ github.event.client_payload.chat_id }}
+          TELEGRAM_BRIDGE_URL: ${{ vars.TELEGRAM_BRIDGE_URL }}
+        run: |
+          git config user.name "zero"
+          git config user.email "zero@purplepincher.org"
+          printf '%s' "Hmm, my brain hiccuped. Try again in a minute." > /tmp/pincher_reply.txt
+          python3 - <<'PY'
+          import os, pathlib, datetime
+          stem = os.environ.get("CONV_STEM", "").strip()
+          if not stem:
+              stem = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H%M%SZ")
+          reply = pathlib.Path("/tmp/pincher_reply.txt").read_text().strip()
+          at = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+          outdir = pathlib.Path("conversation/outputs")
+          outdir.mkdir(parents=True, exist_ok=True)
+          header = f"---\nfrom: zero\nat: {at}\nvia: telegram\nturn: {stem}\nin-reply-to: inputs/{stem}.md\nnote: fallback reply — the think step failed this turn\n---\n\n"
+          (outdir / f"{stem}.md").write_text(header + reply + "\n")
+          PY
+          git add conversation/outputs
+          git diff --staged --quiet || (git commit -m "telegram: reply (fallback — think step failed)" && git push)
           jq -n --argjson chat "$TG_CHAT" --arg text "$(cat /tmp/pincher_reply.txt)" \
             '{chat_id: $chat, text: $text}' | \
             curl -s -X POST ${TELEGRAM_BRIDGE_URL:-https://lobster-telegram-bridge.casey-digennaro.workers.dev}/send \
