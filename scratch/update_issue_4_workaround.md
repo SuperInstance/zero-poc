@@ -1,4 +1,4 @@
-To resolve the 404 error with the `list_issues` action, we will switch to using the `gh` CLI tool. Here are the steps to implement this workaround:
-1. Install the `gh` CLI if it is not already installed.
-2. Use the `gh issue list` command to retrieve the list of open issues.
-3. Update the task in TASKS.md to reflect the use of the `gh` CLI tool.
+To resolve the persistent 404 error with the `list_issues` action, we will continue to use the `gh` CLI tool as a workaround. Here are the steps to implement this:
+1. Ensure the `gh` CLI is installed.
+2. Use the command `gh issue list` to retrieve the list of open issues.
+3. Update TASKS.md to reflect the use of the `gh` CLI tool for listing issues.
