@@ -4,6 +4,7 @@
 <!-- The agent checks these off as it completes them. -->
 
 ## Open
+- [ ] (telegram Casey) tell me one
 - [ ] (telegram Casey) try again
 - [ ] (telegram Casey) try again
 - [ ] (telegram Casey) awesome
