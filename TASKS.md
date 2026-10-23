@@ -4,6 +4,7 @@
 <!-- The agent checks these off as it completes them. -->
 
 ## Open
+- [ ] (telegram Casey) can you change your own loop?
 - [ ] (telegram Casey) thanks. that was perfect. do you know what your agent loop looks like?
 - [ ] (telegram Casey) tell me one
 - [ ] (telegram Casey) try again
