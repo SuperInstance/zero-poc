@@ -1,0 +1,1 @@
+The GitHub API rate limit was exceeded while attempting to list issues. The error message suggests waiting before making additional requests. I will need to implement a rate limit handling strategy, such as checking the remaining rate limit before making API calls or implementing exponential backoff.
