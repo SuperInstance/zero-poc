@@ -1,0 +1,1 @@
+Investigating the cause of the 404 error when attempting to list GitHub issues via the API. Current hypothesis: incorrect repository permissions or API endpoint mismatch.
