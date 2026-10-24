@@ -56,6 +56,20 @@
 #   loop (shell + internet + vault) works the board — so a request
 #   to DO something is answered truthfully ("it's on my board"),
 #   never with a claim the work is already done.
+# - TEST MODE (v0.6.1): a repository_dispatch whose client_payload
+#   carries dry_run: "true" runs the whole pipeline - log, assemble,
+#   think, record - but delivers nothing: the bridge send steps are
+#   skipped, MEMORY.md and the TASKS board are left untouched, and
+#   the conversation pair is recorded with `via:` taken from the
+#   payload (default "telegram"; tests use e.g. "cli-test") plus a
+#   dry-run note in both files. The bridge never sets these fields,
+#   so production behaviour is unchanged. This is how the agent is
+#   tested end-to-end from a CLI:
+#     gh api repos/<owner>/<repo>/dispatches -f event_type=telegram_message \
+#       -f client_payload[text]="<probe>" -f client_payload[username]=claude-cli \
+#       -f client_payload[chat_id]=0 -f client_payload[dry_run]=true \
+#       -f client_payload[via]=cli-test
+#   chat_id is unused in dry-run (no send is attempted).
 # - The bridge URL fallback below is hardcoded; the override is the repo
 #   variable TELEGRAM_BRIDGE_URL. Moving the bridge means updating both
 #   (plus VAULT.md-style docs).
@@ -105,28 +119,33 @@ jobs:
           TG_TEXT: ${{ github.event.client_payload.text }}
           TG_USER: ${{ github.event.client_payload.username }}
           TG_CHAT: ${{ github.event.client_payload.chat_id }}
+          TG_DRY_RUN: ${{ github.event.client_payload.dry_run }}
+          TG_VIA: ${{ github.event.client_payload.via }}
         run: |
           echo "Telegram message from ${TG_USER}"
           echo "Chat ID: ${TG_CHAT}"
           git config user.name "zero"
           git config user.email "zero@purplepincher.org"
-          echo "- Telegram from ${TG_USER} at $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> MEMORY.md
+          if [ "$TG_DRY_RUN" != "true" ]; then
+            echo "- Telegram from ${TG_USER} at $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> MEMORY.md
+          fi
           python3 - <<'PY'
           import os, pathlib
           text = " ".join(os.environ.get("TG_TEXT", "").split())[:200]
           user = os.environ.get("TG_USER", "unknown")
-          line = f"- [ ] (telegram {user}) {text}"
-          p = pathlib.Path("TASKS.md")
-          if p.exists():
-              content = p.read_text()
-              if "## Open" in content:
-                  head, _, tail = content.partition("## Open")
-                  content = head + "## Open\n" + line + "\n" + tail.lstrip("\n").removeprefix("<!-- Add tasks here -->").lstrip("\n")
-              else:
-                  content = content.rstrip("\n") + f"\n\n## Open\n{line}\n"
-          else:
-              content = f"# TASKS.md — Task Board\n\n## Open\n{line}\n"
-          p.write_text(content)
+          if os.environ.get("TG_DRY_RUN") != "true":
+            line = f"- [ ] (telegram {user}) {text}"
+            p = pathlib.Path("TASKS.md")
+            if p.exists():
+                content = p.read_text()
+                if "## Open" in content:
+                    head, _, tail = content.partition("## Open")
+                    content = head + "## Open\n" + line + "\n" + tail.lstrip("\n").removeprefix("<!-- Add tasks here -->").lstrip("\n")
+                else:
+                    content = content.rstrip("\n") + f"\n\n## Open\n{line}\n"
+            else:
+                content = f"# TASKS.md — Task Board\n\n## Open\n{line}\n"
+            p.write_text(content)
           # v0.4: record the FULL inbound message as a conversation input
           # (TASKS.md above keeps only a flattened 200-char routing copy).
           # The turn stem pairs this input with its reply in
@@ -141,7 +160,9 @@ jobs:
           while (indir / f"{base}.md").exists():
               n += 1
               base = f"{stem}-{n}"
-          header = f"---\nfrom: {user}\nat: {stamp.strftime('%Y-%m-%dT%H:%M:%SZ')}\nvia: telegram\nturn: {base}\n---\n\n"
+          via = os.environ.get("TG_VIA") or "telegram"
+          note = "note: dry-run test - recorded, not delivered\n" if os.environ.get("TG_DRY_RUN") == "true" else ""
+          header = f"---\nfrom: {user}\nat: {stamp.strftime('%Y-%m-%dT%H:%M:%SZ')}\nvia: {via}\nturn: {base}\n{note}---\n\n"
           (indir / f"{base}.md").write_text(header + raw + "\n")
           pathlib.Path("/tmp/conv_stem.txt").write_text(base)
           PY
@@ -276,6 +297,9 @@ jobs:
         # inbound log. The record is primary; the send is delivery. If
         # the bridge step then fails, the output file still stands as
         # what the agent said, and the failure is the bridge's to own.
+        env:
+          TG_VIA: ${{ github.event.client_payload.via }}
+          TG_DRY_RUN: ${{ github.event.client_payload.dry_run }}
         run: |
           git config user.name "zero"
           git config user.email "zero@purplepincher.org"
@@ -288,13 +312,16 @@ jobs:
           at = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
           outdir = pathlib.Path("conversation/outputs")
           outdir.mkdir(parents=True, exist_ok=True)
-          header = f"---\nfrom: zero\nat: {at}\nvia: telegram\nturn: {stem}\nin-reply-to: inputs/{stem}.md\n---\n\n"
+          via = os.environ.get("TG_VIA") or "telegram"
+          note = "note: dry-run test - recorded, not delivered\n" if os.environ.get("TG_DRY_RUN") == "true" else ""
+          header = f"---\nfrom: zero\nat: {at}\nvia: {via}\nturn: {stem}\nin-reply-to: inputs/{stem}.md\n{note}---\n\n"
           (outdir / f"{stem}.md").write_text(header + reply + "\n")
           PY
           git add conversation/outputs
           git diff --staged --quiet || (git commit -m "telegram: reply (${CONV_STEM})" && git push)
 
       - name: Reply via bridge
+        if: ${{ github.event.client_payload.dry_run != 'true' }}
         env:
           TG_CHAT: ${{ github.event.client_payload.chat_id }}
           TELEGRAM_BRIDGE_URL: ${{ vars.TELEGRAM_BRIDGE_URL }}
@@ -314,6 +341,7 @@ jobs:
         env:
           TG_CHAT: ${{ github.event.client_payload.chat_id }}
           TELEGRAM_BRIDGE_URL: ${{ vars.TELEGRAM_BRIDGE_URL }}
+          TG_DRY_RUN: ${{ github.event.client_payload.dry_run }}
         run: |
           git config user.name "zero"
           git config user.email "zero@purplepincher.org"
@@ -332,7 +360,9 @@ jobs:
           PY
           git add conversation/outputs
           git diff --staged --quiet || (git commit -m "telegram: reply (fallback — think step failed)" && git push)
-          jq -n --argjson chat "$TG_CHAT" --arg text "$(cat /tmp/pincher_reply.txt)" \
-            '{chat_id: $chat, text: $text}' | \
-            curl -s -X POST ${TELEGRAM_BRIDGE_URL:-https://lobster-telegram-bridge.casey-digennaro.workers.dev}/send \
-              -H "Content-Type: application/json" -d @- | jq '{ok, error}'
+          if [ "$TG_DRY_RUN" != "true" ]; then
+            jq -n --argjson chat "$TG_CHAT" --arg text "$(cat /tmp/pincher_reply.txt)" \
+              '{chat_id: $chat, text: $text}' | \
+              curl -s -X POST ${TELEGRAM_BRIDGE_URL:-https://lobster-telegram-bridge.casey-digennaro.workers.dev}/send \
+                -H "Content-Type: application/json" -d @- | jq '{ok, error}'
+          fi
