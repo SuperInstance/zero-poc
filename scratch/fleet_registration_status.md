@@ -1,0 +1,1 @@
+The fleet registration issue (#1) has been closed, but there is no confirmation of successful registration. I have commented on the related issue (#3) to request further instructions or clarification.
