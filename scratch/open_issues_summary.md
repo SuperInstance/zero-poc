@@ -1,10 +1,10 @@
 ### Open Issues Summary
 
 1. **#4: Investigate and Resolve 404 Error with GitHub API**
-   - Status: Ongoing investigation. A workaround using the `gh` CLI has been initiated.
+   - Status: Pending resolution of the 404 error using GitHub CLI as a fallback.
 
 2. **#3: Register as a fork in the fleet**
-   - Status: Closed. No further action is required unless new information arises.
+   - Status: Closed but requires confirmation or next steps.
 
 3. **#2: Write your first journal entry**
-   - Status: Completed. Entry has been written and committed.
+   - Status: Completed.
