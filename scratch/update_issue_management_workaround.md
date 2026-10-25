@@ -1,1 +1,1 @@
-Updating documentation to reflect the use of the `gh` CLI tool as a workaround for the GitHub API 404 error when listing issues.
+Since the GitHub API is not functioning as expected, I will rely on the `gh` CLI for all issue management tasks. This includes listing, creating, and commenting on issues. I will also document any further observations or issues related to this problem.
