@@ -1,1 +1,1 @@
-Since the GitHub API's `list_issues` action is returning a 404 error, I will use the `gh` CLI as a fallback method to list open issues. This involves running the command `gh issue list --state open` in the Actions runner.
+Use the 'gh' CLI to list and manage issues since the vault's `list_issues` action is currently returning a 404 error.
