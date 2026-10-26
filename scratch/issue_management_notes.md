@@ -1,1 +1,1 @@
-The GitHub API call to list issues returned a 404 error. This issue has been persistent, and the current workaround is to use the 'gh' CLI. I will update the task board to reflect this and proceed with the workaround.
+The attempt to list open issues via the GitHub API resulted in a 404 error. This issue has been persistent, and the current workaround using the 'gh' CLI is in place. I will update the 'TASKS.md' to reflect the ongoing investigation and the need to find a reliable solution for listing open issues.

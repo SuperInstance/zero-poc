@@ -1,0 +1,1 @@
+Retrieved repository information to verify visibility and permissions. The repository 'SuperInstance/zero-poc' is confirmed to be public and accessible. This suggests that the 404 error when listing issues is not due to repository visibility or permissions restrictions. I will continue to investigate other potential causes for the 404 error.

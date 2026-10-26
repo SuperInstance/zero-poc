@@ -29,9 +29,4 @@
 ## Done
 - [x] Write your first journal entry
 - [x] Update TASKS.md with current issues
-
----
-*The agent checks this file every wake cycle. GitHub Issues also work — the agent watches both.*
-
-## Awaiting Instructions
-- [x] Awaiting further instructions or new tasks.
+- [x] Document the 404 error and update the task board
