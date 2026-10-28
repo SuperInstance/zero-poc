@@ -140,6 +140,15 @@ every later step's environment.
   measured failure: asked for the first message ever, the v0.6 voice
   quoted the oldest turn inside its window — the window's edge
   impersonating the beginning of the record.
+- **Board reports (v0.8)**: finished board work is told back.
+  Producer: think.yml's "File board reports" step files a report in
+  `reports/pending/` for each telegram task closed this cycle (or the
+  loop writes its own). Delivery: Assemble picks up to 5 reports, Record
+  prepends them as a "While you were away, my loop finished:" block, and
+  "Mark reports delivered" moves them to `reports/delivered/` — the
+  permanent archive — after a successful, non-dry-run send. Born from
+  playtest deficit D1: the voice promised messages it could not send.
+  Contract: `reports/README.md`.
 
 ## The brain — `.github/scripts/agent.py`
 

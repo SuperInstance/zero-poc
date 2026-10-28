@@ -49,6 +49,7 @@ the repo allowlist, and supplies the secret. I never hold a key.
 |---|---|---|
 | `llm` / `complete` | One rented LLM completion — my thinking itself | think loop, telegram & react workflows |
 | Conversation memory | The reply call is assembled from the record: brief + exact repo identity + `CONTEXT.md` digest + recent turns from `conversation/`, widened by two v0.7 hooks — the first turn ever is always pinned in, and when a message refers back, matching turns are pulled from the full record — the voice hears with memory, not amnesiac | telegram workflow |
+| Board reports | Finished board work is filed to reports/pending/ by a think.yml producer step (or by the loop itself) and delivered attached to the next Telegram reply; delivered reports archive in reports/delivered/ | think loop + telegram workflow |
 | The internet | Reachable via the think loop's `run_shell` (runner has outbound access) and the vault APIs. The Telegram voice cannot browse mid-reply; a request to look something up rides `TASKS.md` to the loop | think loop |
 | `github` / `list_issues` | Fetch open issues (context assembly; `gh` fallback) | think loop |
 | `github` / `comment_issue`, `create_issue`, `get_repo` | GitHub API access | think loop (vault tier) |

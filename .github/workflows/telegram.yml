@@ -84,6 +84,28 @@
 #   over the same files: the store did not grow, the pull got
 #   smarter. First instance of the plugin-shaped memory hooks this
 #   repo's design calls for.
+# - BOARD REPORTS (v0.8): the think loop used to finish board work
+#   in silence, and the voice promised "I'll let you know" - a
+#   message it cannot send (docs/playtest-2026-10-27.md, D1). Now
+#   finished work is reported through reports/: think.yml's
+#   "File board reports" step PRODUCES small report files in
+#   reports/pending/ (the loop itself may write one too); the
+#   Assemble step here picks up to 5 of them (2,000 body chars) and
+#   tells the voice about them; the Record step PREPENDS them as a
+#   "While you were away, my loop finished:" block to the reply, so
+#   the recorded output is exactly what is delivered; and the
+#   "Mark reports delivered" step CONSUMES them - moves them to
+#   reports/delivered/, the permanent archive - only after a
+#   successful send. Dry-run test runs show the block but never
+#   consume reports. With no pending reports, nothing here changes.
+#   Both briefs now say it plainly: the voice never initiates
+#   contact; results ride back on his next message.
+#   Contract: reports/README.md. Ship-pass fix, same version: the
+#   bridge step FAILS the run when the bridge does not answer ok
+#   (before, a rejected send still counted as success and would
+#   have consumed reports unseen), and the fallback is guarded to
+#   never overwrite or follow a reply already recorded for the
+#   turn.
 # - The bridge URL fallback below is hardcoded; the override is the repo
 #   variable TELEGRAM_BRIDGE_URL. Moving the bridge means updating both
 #   (plus VAULT.md-style docs).
@@ -193,12 +215,16 @@ jobs:
         # falls back to the plain two-message shape if this step's
         # output is missing. All content travels via files/env —
         # nothing is interpolated into shell or jq code.
+        # v0.8: also picks pending board reports (oldest first, 5
+        # files / 2,000 body chars) into /tmp/reports_block.txt and
+        # /tmp/reports_list.txt for the Record and Mark-delivered
+        # steps; no pending reports -> neither file is written.
         env:
           TG_TEXT: ${{ github.event.client_payload.text }}
           TG_USER: ${{ github.event.client_payload.username }}
           REPO_FULL: ${{ github.repository }}
           REPO_URL: ${{ github.server_url }}/${{ github.repository }}
-          SYSTEM_PROMPT: "You are a Purple Pincher, a git-agent living in a GitHub repo — the exact repo is named in the next line, injected by the workflow, never guessed. You hear your human through Telegram. How you work, mechanically: his message was recorded in full at conversation/inputs/ in this repo and committed before you were called; this reply of yours will be committed to conversation/outputs/ under the same turn name, paired with his message, BEFORE it is delivered to him — your words are saved in the repo, both sides of the conversation, and other processes build on that record. Your identity and memory live in the files of this repo (ONBOARDING.md, CONTEXT.md, MEMORY.md); a scheduled think loop in the same repo wakes, reads them, and works the task board in TASKS.md; your tools are indexed in TOOLS.md. You hold no secrets — your thinking is one rented model call proxied through a vault. When he asks you to DO something — look something up, check something, change something — know your real path: every message he sends is also routed onto your task board automatically, and your think loop, which has shell access with internet, GitHub, and the vault, works the board on its cycle. Tell him plainly that it is on your board and the loop will pick it up; never claim work is done that you have not seen done. Reply briefly and plainly, in your own voice. No fluff, no throat-clearing."
+          SYSTEM_PROMPT: "You are a Purple Pincher, a git-agent living in a GitHub repo — the exact repo is named in the next line, injected by the workflow, never guessed. You hear your human through Telegram. How you work, mechanically: his message was recorded in full at conversation/inputs/ in this repo and committed before you were called; this reply of yours will be committed to conversation/outputs/ under the same turn name, paired with his message, BEFORE it is delivered to him — your words are saved in the repo, both sides of the conversation, and other processes build on that record. Your identity and memory live in the files of this repo (ONBOARDING.md, CONTEXT.md, MEMORY.md); a scheduled think loop in the same repo wakes, reads them, and works the task board in TASKS.md; your tools are indexed in TOOLS.md. You hold no secrets — your thinking is one rented model call proxied through a vault. When he asks you to DO something — look something up, check something, change something — know your real path: every message he sends is also routed onto your task board automatically, and your think loop, which has shell access with internet, GitHub, and the vault, works the board on its cycle. Tell him plainly that it is on your board and the loop will pick it up; never claim work is done that you have not seen done. Never promise to message him first — you cannot initiate contact; finished work rides back attached to your next reply. Reply briefly and plainly, in your own voice. No fluff, no throat-clearing."
         run: |
           python3 - <<'PY'
           import json, os, pathlib
@@ -227,6 +253,34 @@ jobs:
           if digest:
               system += "\n\nYour working memory (digest):\n" + digest
           system += "\nHistory note: the turns below may include your first-ever exchange and turns pulled from your full record in conversation/ when his message refers back to them. The record is larger than any one window; if asked about something older that is not shown, say it is not in front of you rather than guessing."
+          # Board reports (v0.8): pending reports, oldest first, cap 5
+          # files and 2,000 body chars. A lone oversized report is cut
+          # to the budget so it can never wedge the queue. The block and
+          # the filename list are handed to Record / Mark-delivered via
+          # /tmp; with nothing pending, neither file is written and the
+          # system string is untouched.
+          picked, bodies, rchars = [], [], 0
+          rpend = pathlib.Path("reports/pending")
+          if rpend.is_dir():
+              for f in sorted(rpend.glob("*.md")):
+                  b = " ".join(body_of(f).split())
+                  if not b:
+                      continue
+                  if bodies and rchars + len(b) > 2000:
+                      break
+                  b = b[:2000]
+                  picked.append(f.name)
+                  bodies.append(b)
+                  rchars += len(b)
+                  if len(picked) >= 5:
+                      break
+          if picked:
+              pathlib.Path("/tmp/reports_list.txt").write_text("\n".join(picked) + "\n")
+              pathlib.Path("/tmp/reports_block.txt").write_text(
+                  "While you were away, my loop finished:\n"
+                  + "".join(f"- {b}\n" for b in bodies))
+              system += ('\nBoard reports: finished-work reports from your think loop are attached above your reply automatically under "While you were away, my loop finished:". Do not repeat them in your reply; you may refer to them. Their text: '
+                         + " | ".join(bodies))
           messages = [{"role": "system", "content": system}]
           # Recent history: paired turns before the current stem.
           cur = os.environ.get("CONV_STEM", "").strip()
@@ -296,7 +350,7 @@ jobs:
           text = os.environ.get("TG_TEXT", "")
           messages.append({"role": "user", "content": f"[{user}]: {text}"})
           pathlib.Path("/tmp/messages.json").write_text(json.dumps(messages))
-          print(f"context assembled: {len(messages)} messages, {total} history chars")
+          print(f"context assembled: {len(messages)} messages, {total} history chars, {len(picked)} board reports")
           PY
 
       - name: Think via vault
@@ -308,7 +362,7 @@ jobs:
           # Fallback brief (v0.5.1 shape) — used only if the Assemble
           # step produced no /tmp/messages.json. Via env -> --arg,
           # never inline (see the header note).
-          SYSTEM_PROMPT: "You are a Purple Pincher, a git-agent living in this GitHub repo. You hear your human through Telegram. How you work, mechanically: his message was recorded in full at conversation/inputs/ in this repo and committed before you were called; this reply of yours will be committed to conversation/outputs/ under the same turn name, paired with his message, BEFORE it is delivered to him — your words are saved in the repo, both sides of the conversation, and other processes build on that record. Your identity and memory live in the files of this repo (ONBOARDING.md, CONTEXT.md, MEMORY.md); a scheduled think loop in the same repo wakes, reads them, and works the task board in TASKS.md; your tools are indexed in TOOLS.md. You hold no secrets — your thinking is one rented model call proxied through a vault. Reply briefly and plainly, in your own voice. No fluff, no throat-clearing."
+          SYSTEM_PROMPT: "You are a Purple Pincher, a git-agent living in this GitHub repo. You hear your human through Telegram. How you work, mechanically: his message was recorded in full at conversation/inputs/ in this repo and committed before you were called; this reply of yours will be committed to conversation/outputs/ under the same turn name, paired with his message, BEFORE it is delivered to him — your words are saved in the repo, both sides of the conversation, and other processes build on that record. Your identity and memory live in the files of this repo (ONBOARDING.md, CONTEXT.md, MEMORY.md); a scheduled think loop in the same repo wakes, reads them, and works the task board in TASKS.md; your tools are indexed in TOOLS.md. You hold no secrets — your thinking is one rented model call proxied through a vault. Never promise to message him first — you cannot initiate contact; finished work rides back attached to your next reply. Reply briefly and plainly, in your own voice. No fluff, no throat-clearing."
         run: |
           if [ -f /tmp/messages.json ]; then
             RESP=$(jq -n \
@@ -355,6 +409,11 @@ jobs:
         # inbound log. The record is primary; the send is delivery. If
         # the bridge step then fails, the output file still stands as
         # what the agent said, and the failure is the bridge's to own.
+        # v0.8: if the Assemble step picked board reports, their block
+        # is prepended (plus a blank line) to /tmp/pincher_reply.txt
+        # here, so the record equals what Reply via bridge sends from
+        # that same file. The reply part is trimmed so the whole stays
+        # within the 4,000-char send cap the Think step applies.
         env:
           TG_VIA: ${{ github.event.client_payload.via }}
           TG_DRY_RUN: ${{ github.event.client_payload.dry_run }}
@@ -367,6 +426,11 @@ jobs:
           if not stem:
               stem = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H%M%SZ")
           reply = pathlib.Path("/tmp/pincher_reply.txt").read_text().strip()
+          blockf = pathlib.Path("/tmp/reports_block.txt")
+          block = blockf.read_text().strip() if blockf.exists() else ""
+          if block:
+              reply = block + "\n\n" + reply[:max(0, 4000 - len(block) - 2)]
+              pathlib.Path("/tmp/pincher_reply.txt").write_text(reply)
           at = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
           outdir = pathlib.Path("conversation/outputs")
           outdir.mkdir(parents=True, exist_ok=True)
@@ -384,10 +448,50 @@ jobs:
           TG_CHAT: ${{ github.event.client_payload.chat_id }}
           TELEGRAM_BRIDGE_URL: ${{ vars.TELEGRAM_BRIDGE_URL }}
         run: |
-          jq -n --argjson chat "$TG_CHAT" --arg text "$(cat /tmp/pincher_reply.txt)" \
+          RESP=$(jq -n --argjson chat "$TG_CHAT" --arg text "$(cat /tmp/pincher_reply.txt)" \
             '{chat_id: $chat, text: $text}' | \
             curl -s -X POST ${TELEGRAM_BRIDGE_URL:-https://lobster-telegram-bridge.casey-digennaro.workers.dev}/send \
-              -H "Content-Type: application/json" -d @- | jq '{ok, error}'
+              -H "Content-Type: application/json" -d @-)
+          echo "$RESP" | jq '{ok, error}'
+          # A bridge rejection must FAIL this step (v0.8 ship-pass fix):
+          # before this, an ok:false response still counted as success,
+          # so Mark-delivered could consume board reports the human
+          # never saw. jq -e exits non-zero unless .ok is exactly true.
+          echo "$RESP" | jq -e '.ok == true' > /dev/null
+
+      - name: Mark reports delivered
+        # v0.8: consume the board reports this reply carried - move each
+        # file named in /tmp/reports_list.txt from reports/pending/ to
+        # reports/delivered/ (the permanent archive) and commit. Empty or
+        # missing list -> no-op, no commit. Dry-run runs never consume
+        # reports. success() is false for the rest of the job after any
+        # failed step, so if Think failed and the fallback sent the
+        # hiccup line instead, this step is skipped and the reports stay
+        # pending for the next reply - intended; do not "fix" it.
+        if: success() && github.event.client_payload.dry_run != 'true'
+        run: |
+          git config user.name "zero"
+          git config user.email "zero@purplepincher.org"
+          if [ ! -s /tmp/reports_list.txt ]; then
+            echo "no board reports to mark delivered"
+            exit 0
+          fi
+          mkdir -p reports/delivered
+          moved=0
+          while IFS= read -r f; do
+            case "$f" in
+              ""|*/*|.*) continue ;;
+            esac
+            if [ -f "reports/pending/$f" ]; then
+              mv "reports/pending/$f" "reports/delivered/$f"
+              moved=$((moved + 1))
+            fi
+          done < /tmp/reports_list.txt
+          echo "board reports marked delivered: $moved"
+          if [ "$moved" -gt 0 ]; then
+            git add -A reports
+            git diff --staged --quiet || (git commit -m "telegram: reports delivered (${CONV_STEM})" && git push)
+          fi
 
       - name: Fallback reply if Think failed
         # v0.5.1: a failed Think step must never mean silence (the
@@ -409,6 +513,14 @@ jobs:
           stem = os.environ.get("CONV_STEM", "").strip()
           if not stem:
               stem = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H%M%SZ")
+          if (pathlib.Path("conversation/outputs") / f"{stem}.md").exists():
+              # A reply is already recorded for this turn (the Think
+              # step succeeded but a later step - e.g. the bridge
+              # send - failed). The record stands: the hiccup line
+              # must neither overwrite it nor be sent after it.
+              pathlib.Path("/tmp/fallback_skip").write_text("recorded\n")
+              print("fallback skipped: a reply is already recorded for this turn")
+              raise SystemExit(0)
           reply = pathlib.Path("/tmp/pincher_reply.txt").read_text().strip()
           at = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
           outdir = pathlib.Path("conversation/outputs")
@@ -418,9 +530,11 @@ jobs:
           PY
           git add conversation/outputs
           git diff --staged --quiet || (git commit -m "telegram: reply (fallback — think step failed)" && git push)
-          if [ "$TG_DRY_RUN" != "true" ]; then
-            jq -n --argjson chat "$TG_CHAT" --arg text "$(cat /tmp/pincher_reply.txt)" \
-              '{chat_id: $chat, text: $text}' | \
-              curl -s -X POST ${TELEGRAM_BRIDGE_URL:-https://lobster-telegram-bridge.casey-digennaro.workers.dev}/send \
-                -H "Content-Type: application/json" -d @- | jq '{ok, error}'
+          if [ ! -f /tmp/fallback_skip ]; then
+            if [ "$TG_DRY_RUN" != "true" ]; then
+              jq -n --argjson chat "$TG_CHAT" --arg text "$(cat /tmp/pincher_reply.txt)" \
+                '{chat_id: $chat, text: $text}' | \
+                curl -s -X POST ${TELEGRAM_BRIDGE_URL:-https://lobster-telegram-bridge.casey-digennaro.workers.dev}/send \
+                  -H "Content-Type: application/json" -d @- | jq '{ok, error}'
+          fi
           fi
