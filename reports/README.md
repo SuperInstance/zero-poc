@@ -85,6 +85,14 @@ The telegram workflow, on the human's next message:
 
 Anything over the caps simply waits for the next message.
 
+**The gate (v0.8.2).** The block is the workflow's voice, never the
+model's. If the voice's draft reply imitates the block (it contains
+"while you were away" or "loop finished" while a block is being
+attached), the Record step replaces the draft whole with a neutral
+line and notes the replacement in the output's header. Prompt
+wording alone failed this twice in live acceptance; the boundary
+is therefore mechanical.
+
 ## Rules
 
 - **Delivered is permanent.** A delivered report is never edited or

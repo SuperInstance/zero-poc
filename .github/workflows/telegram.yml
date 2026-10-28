@@ -114,6 +114,17 @@
 #   AFTER the voice writes and must never be imitated, and both
 #   briefs carry a standing rule: never state an outcome that is
 #   not in the record or in an attached report.
+# - THE GATE (v0.8.2): the v0.8.1 wording did not hold - on the
+#   re-run the voice copied the block AND invented the outcome
+#   again, partly by reading its own previous fabrication out of
+#   the assembled history. So the boundary is now mechanical, not
+#   rhetorical: when a reports block is attached, the Record step
+#   checks the voice's draft for the block's signature phrases
+#   ("while you were away" / "loop finished"); a draft that
+#   imitates the block is replaced whole with a neutral line and
+#   the replacement is noted in the output's header. The reports
+#   are measurements; per the standing law, the model carries the
+#   script, never the measurement.
 # - The bridge URL fallback below is hardcoded; the override is the repo
 #   variable TELEGRAM_BRIDGE_URL. Moving the bridge means updating both
 #   (plus VAULT.md-style docs).
@@ -436,6 +447,16 @@ jobs:
           reply = pathlib.Path("/tmp/pincher_reply.txt").read_text().strip()
           blockf = pathlib.Path("/tmp/reports_block.txt")
           block = blockf.read_text().strip() if blockf.exists() else ""
+          replaced = False
+          if block and ("while you were away" in reply.lower() or "loop finished" in reply.lower()):
+              # v0.8.2 gate: the reports block is the workflow's voice,
+              # never the model's. A reply that imitates it (the live
+              # acceptance failure - it arrived with an invented
+              # outcome attached) is replaced whole; the incident is
+              # noted in the output header below. Deterministic string
+              # check, applied only when a block is being attached.
+              reply = "That's everything my loop has reported. Ask me about anything else and I'll answer from my record."
+              replaced = True
           if block:
               reply = block + "\n\n" + reply[:max(0, 4000 - len(block) - 2)]
               pathlib.Path("/tmp/pincher_reply.txt").write_text(reply)
@@ -443,7 +464,12 @@ jobs:
           outdir = pathlib.Path("conversation/outputs")
           outdir.mkdir(parents=True, exist_ok=True)
           via = os.environ.get("TG_VIA") or "telegram"
-          note = "note: dry-run test - recorded, not delivered\n" if os.environ.get("TG_DRY_RUN") == "true" else ""
+          notes = []
+          if os.environ.get("TG_DRY_RUN") == "true":
+              notes.append("dry-run test - recorded, not delivered")
+          if replaced:
+              notes.append("voice reply replaced - it imitated the reports block (v0.8.2 gate)")
+          note = ("note: " + "; ".join(notes) + "\n") if notes else ""
           header = f"---\nfrom: zero\nat: {at}\nvia: {via}\nturn: {stem}\nin-reply-to: inputs/{stem}.md\n{note}---\n\n"
           (outdir / f"{stem}.md").write_text(header + reply + "\n")
           PY
