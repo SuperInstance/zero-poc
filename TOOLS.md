@@ -82,6 +82,15 @@ the repo allowlist, and supplies the secret. I never hold a key.
 | `.agent-state.json` | Last cycle's vital signs: outcome, iterations, duty-cycle clock, shadow verdict |
 | `for-fleet/` | Bottles — one-line-headline messages to sibling agents; the first line of up to 5 is shown each cycle if the folder exists (it does not yet) |
 
+## Skills — ways of working (plugins)
+
+Grabbed capabilities that are knowledge, not calls (the grabber
+contract: `plugins/README.md`; installed list: `plugins/INDEX.md`).
+
+| Skill | What it does | Trigger |
+|---|---|---|
+| Weather lookup (`plugins/weather/PLUGIN.md`) | Current conditions + today/tomorrow outlook for a named place (default Sitka, Alaska) from wttr.in, via `run_shell` + `jq`. Measured numbers only; a failed lookup is reported as failed — never estimated | A human asks about the weather, or a board task asks to look it up |
+
 ## Planned — NOT available
 
 *(Empty. A planned capability gets a row here — name, intended
