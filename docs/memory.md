@@ -6,7 +6,7 @@ forked agent, read its memory — you are reading its mind.
 
 ## The stack
 
-Five layers, from what the agent holds in mind now down to the ground truth:
+Six layers, from what the agent holds in mind now down to the ground truth:
 
 - **`CONTEXT.md`** — working memory. A short Facts table (claim | sha | ts |
   confidence) plus open questions and blocked items. **Rewritten, never
@@ -19,6 +19,13 @@ Five layers, from what the agent holds in mind now down to the ground truth:
   "Telegram from <user> at <ts>" line per real (non-dry-run) message. The
   think loop does **not** read it — only as a fallback (last 2,000 chars) if
   `CONTEXT.md` is missing. The react workflow reads its first 1,200 bytes.
+- **`SELF-MODEL.md`** — the operative self-model: dated beliefs about how
+  the owner sees the agent, each citing its evidence (a turn stem, a doc).
+  The think loop reads its first 1,800 chars every iteration; the telegram
+  voice reads the Current beliefs section. The loop maintains it at
+  crossings (corrections, thanks, new trust, silences). Declared identity
+  lives in `ONBOARDING.md`; this is the belief layer that steers behavior.
+  Contract: the file's own header.
 - **`conversation/`** — the dialogue, verbatim, both sides: `inputs/` (the
   human) and `outputs/` (the agent), paired by turn stem. Append-only.
   The telegram voice reads it (last 10 turns, the first turn, and turns the

@@ -78,6 +78,7 @@ the repo allowlist, and supplies the secret. I never hold a key.
 |---|---|
 | `conversation/inputs/` + `outputs/` | The verbatim dialogue with my human, both sides, paired by turn stem. Written by the telegram workflow (not a tool call); readable by everything — the substrate other work builds on (contract: `conversation/README.md`) |
 | `CONTEXT.md` / `MEMORY.md` | Working memory / append-only digest — how I remember between cycles |
+| `SELF-MODEL.md` | My operative self-model — dated beliefs about how my owner sees me, each citing its evidence; revised by the loop at crossings (contract: the file's own header) |
 | `reports/pending/` + `delivered/` | Finished board work waiting to be told / already told (contract: `reports/README.md`) |
 | `.agent-state.json` | Last cycle's vital signs: outcome, iterations, duty-cycle clock, shadow verdict |
 | `for-fleet/` | Bottles — one-line-headline messages to sibling agents; the first line of up to 5 is shown each cycle if the folder exists (it does not yet) |

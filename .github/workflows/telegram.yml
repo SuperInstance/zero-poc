@@ -271,6 +271,21 @@ jobs:
                       break
           if digest:
               system += "\n\nYour working memory (digest):\n" + digest
+          # Operative self-model (v0.10): the Current beliefs section
+          # of SELF-MODEL.md - what the agent believes its owner
+          # believes about it. Beliefs, not facts: they steer tone
+          # and initiative, and the record outranks them.
+          sm = pathlib.Path("SELF-MODEL.md")
+          if sm.exists():
+              smtxt = sm.read_text()
+              i = smtxt.find("## Current beliefs")
+              j = smtxt.find("## How this file is kept", i + 1) if i != -1 else -1
+              if i != -1:
+                  section = smtxt[i:j if j != -1 else None].strip()
+                  system += ("\n\nHow you believe your owner sees you "
+                             "(operative self-model - beliefs from your "
+                             "record; steer by them, and let the record "
+                             "outrank them):\n" + section[:1100])
           system += "\nHistory note: the turns below may include your first-ever exchange and turns pulled from your full record in conversation/ when his message refers back to them. The record is larger than any one window; if asked about something older that is not shown, say it is not in front of you rather than guessing."
           # Board reports (v0.8): pending reports, oldest first, cap 5
           # files and 2,000 body chars. A lone oversized report is cut

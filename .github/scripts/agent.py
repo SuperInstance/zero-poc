@@ -626,7 +626,8 @@ def build_context(task_description=None):
     """Build the full context for the LLM.
 
     This defines the agent's ENTIRE world-view each iteration. Included:
-    ONBOARDING.md[:6500] (identity + the mechanism), MEMORY.md[-2000:]
+    ONBOARDING.md[:7200] (identity + the mechanism),
+    SELF-MODEL.md[:1800] (operative self-model), MEMORY.md[-2000:]
     (memory digest),
     the task, TASKS.md[:2000], TOOLS.md (read whole - the index
     must never silently truncate), open issue bodies[:800 each] (first 10,
@@ -643,7 +644,7 @@ def build_context(task_description=None):
     # work" section; the slice grows with it so the tail (principles,
     # alignment) is not cut off mid-file)
     try:
-        parts.append("## Who I Am\n" + Path("ONBOARDING.md").read_text()[:6500])
+        parts.append("## Who I Am\n" + Path("ONBOARDING.md").read_text()[:7200])
     except:
         parts.append("## Who I Am\nI am a Purple Pincher zero — a GitHub-native agent.")
 
@@ -690,6 +691,14 @@ def build_context(task_description=None):
     # humans; this one is part of its world-view.
     try:
         parts.append("## My Tools\n" + Path("TOOLS.md").read_text())
+    except Exception:
+        pass
+
+    # The operative self-model (v0.10): what the agent believes its
+    # owner believes about it - the belief layer that steers
+    # behavior, distinct from ONBOARDING's declared identity.
+    try:
+        parts.append("## How My Owner Sees Me (operative self-model)\n" + Path("SELF-MODEL.md").read_text()[:1800])
     except Exception:
         pass
 

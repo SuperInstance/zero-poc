@@ -215,12 +215,12 @@ Walkthrough of `run_agent_loop()`:
    cycle as `gated_idle` with zero LLM calls (see the System-1 paragraph
    below).
 1. **Observe** — `build_context()` assembles the agent's world, fresh each
-   iteration: `ONBOARDING.md`[:6500] (identity + the mechanism),
+   iteration: `ONBOARDING.md`[:7200] (identity + the mechanism),
    `CONTEXT.md`[:2000] (working memory; `MEMORY.md`[-2000:] only if
    `CONTEXT.md` is missing), the task (from `workflow_dispatch` input, else
    "check TASKS.md and issues"), `TASKS.md`[:2000] (board, plus a legend
-   when `[commitment:]`/`[blast:]` stake tags appear), `TOOLS.md` (read whole)
-   (the first 2,000 chars of the tools index), open issues via
+   when `[commitment:]`/`[blast:]` stake tags appear), `TOOLS.md` (read whole),
+   `SELF-MODEL.md`[:1800] (operative self-model), open issues via
    `fetch_open_issues()` — vault `list_issues` first with an `gh issue
    list` fallback, source labeled, and on total failure an explicit
    "FETCH FAILED — this does NOT mean the board is empty" (first 10,
