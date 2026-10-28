@@ -132,6 +132,14 @@ every later step's environment.
   `conversation/` (unpaired inputs ride as bare user turns) — then
   the Think step slurps the file, falling back to the two-message
   shape if assembly produced nothing.
+- **Corpus hooks (v0.7)**: the Assemble step's pull is hooked, not
+  just recent — the first turn ever is pinned into every call, and a
+  deterministic word-overlap reference pull searches the full
+  `conversation/` corpus when the current message reaches back
+  (top 3 turns, 3,000-char budget, no model call). Born from a
+  measured failure: asked for the first message ever, the v0.6 voice
+  quoted the oldest turn inside its window — the window's edge
+  impersonating the beginning of the record.
 
 ## The brain — `.github/scripts/agent.py`
 

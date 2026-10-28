@@ -70,6 +70,20 @@
 #       -f client_payload[chat_id]=0 -f client_payload[dry_run]=true \
 #       -f client_payload[via]=cli-test
 #   chat_id is unused in dry-run (no send is attempted).
+# - CORPUS HOOKS (v0.7): the Assemble step no longer pulls only the
+#   recency window. Two deterministic hooks widen the pull: (1) the
+#   ORIGIN PIN - the first turn ever recorded is always in the room,
+#   so the window's edge can never impersonate the beginning of the
+#   record (measured failure: the 2026-10-24 CLI test asked for the
+#   first message ever and the voice quoted the oldest turn inside
+#   its last-10 window); (2) the REFERENCE PULL - when the current
+#   message reaches back, its content words are scored against
+#   every turn in conversation/ and the best-matching turns join
+#   the context (top 3, 3,000-char budget, word-overlap only - no
+#   model call; a hook, not a judgment). Both hooks are selection
+#   over the same files: the store did not grow, the pull got
+#   smarter. First instance of the plugin-shaped memory hooks this
+#   repo's design calls for.
 # - The bridge URL fallback below is hardcoded; the override is the repo
 #   variable TELEGRAM_BRIDGE_URL. Moving the bridge means updating both
 #   (plus VAULT.md-style docs).
@@ -173,7 +187,8 @@ jobs:
       - name: Assemble context
         # v0.6: build the reply call's messages from the record —
         # brief + exact repo identity + working-memory digest + the
-        # recent conversation, paired from conversation/. Writes
+        # recent conversation, paired from conversation/ (v0.7: plus
+        # the origin pin and the reference pull over the full corpus). Writes
         # /tmp/messages.json; the Think step uses it if present and
         # falls back to the plain two-message shape if this step's
         # output is missing. All content travels via files/env —
@@ -211,6 +226,7 @@ jobs:
                       break
           if digest:
               system += "\n\nYour working memory (digest):\n" + digest
+          system += "\nHistory note: the turns below may include your first-ever exchange and turns pulled from your full record in conversation/ when his message refers back to them. The record is larger than any one window; if asked about something older that is not shown, say it is not in front of you rather than guessing."
           messages = [{"role": "system", "content": system}]
           # Recent history: paired turns before the current stem.
           cur = os.environ.get("CONV_STEM", "").strip()
@@ -218,19 +234,61 @@ jobs:
           outdir = pathlib.Path("conversation/outputs")
           stems = sorted(p.stem for p in indir.glob("*.md")) if indir.exists() else []
           stems = [s for s in stems if s != cur]
-          history, total = [], 0
+          # Window: the most recent paired turns, 12,000-char budget.
+          window, total = [], 0
           for s in reversed(stems):
               u = body_of(indir / f"{s}.md")[:1200]
               op = outdir / f"{s}.md"
               a = body_of(op)[:1200] if op.exists() else None
               cost = len(u) + (len(a) if a else 0)
-              if history and total + cost > 12000:
+              if window and total + cost > 12000:
                   break
-              history.append((u, a))
+              window.append(s)
               total += cost
-              if len(history) >= 10:
+              if len(window) >= 10:
                   break
-          for u, a in reversed(history):
+          chosen = set(window)
+          # Origin pin (v0.7): the first turn ever is always in the
+          # room, so the window's edge can never impersonate the
+          # beginning of the record.
+          if stems:
+              chosen.add(stems[0])
+          # Reference pull (v0.7): when the current message reaches
+          # back, pull matching turns from the FULL corpus -
+          # deterministic word-overlap scoring, top 3 turns,
+          # 3,000-char budget. No model call: a hook, not a judgment.
+          import re as _re
+          STOP = {"the", "a", "an", "and", "or", "of", "to", "in", "is", "was", "were", "are", "you", "your", "yours", "we", "our", "did", "do", "does", "what", "who", "whom", "when", "where", "why", "how", "ever", "sent", "said", "say"}
+          def toks(t):
+              return {w for w in _re.findall(r"[a-z0-9]+", t.lower()) if len(w) >= 3 and w not in STOP}
+          qtoks = toks(os.environ.get("TG_TEXT", ""))
+          if qtoks:
+              scored = []
+              for s in stems:
+                  if s in chosen:
+                      continue
+                  u = body_of(indir / f"{s}.md")
+                  op = outdir / f"{s}.md"
+                  a = body_of(op) if op.exists() else ""
+                  shared = qtoks & toks(u + " " + a)
+                  if len(shared) >= 2:
+                      scored.append((-len(shared), s))
+              scored.sort()
+              refchars = 0
+              for _, s in scored[:3]:
+                  u = body_of(indir / f"{s}.md")[:1200]
+                  op = outdir / f"{s}.md"
+                  a = body_of(op)[:1200] if op.exists() else None
+                  c = len(u) + (len(a) if a else 0)
+                  if refchars + c > 3000:
+                      continue
+                  refchars += c
+                  chosen.add(s)
+          # Emit the chosen turns chronologically.
+          for s in sorted(chosen):
+              u = body_of(indir / f"{s}.md")[:1200]
+              op = outdir / f"{s}.md"
+              a = body_of(op)[:1200] if op.exists() else None
               messages.append({"role": "user", "content": u})
               if a:
                   messages.append({"role": "assistant", "content": a})
