@@ -289,7 +289,7 @@ jobs:
                              "sees you or what you make of him, answer "
                              "from these beliefs in your own words, "
                              "not from generalities):
-"
+" + section[:1100])
           system += "\nHistory note: the turns below may include your first-ever exchange and turns pulled from your full record in conversation/ when his message refers back to them. The record is larger than any one window; if asked about something older that is not shown, say it is not in front of you rather than guessing."
           # Board reports (v0.8): pending reports, oldest first, cap 5
           # files and 2,000 body chars. A lone oversized report is cut
