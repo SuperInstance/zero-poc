@@ -1,12 +1,17 @@
 # Clones and Shells
 
+*Shipped vs vision:* local-brain mode is real — set `LOCAL_LLM_URL` (and
+`LOCAL_LLM_MODEL`) and `agent.py` thinks through any OpenAI-compatible server
+with no vault (`docs/architecture.md`, "Local-brain mode"). The shell sizes
+beyond Zero (Turbo, Tapestry) are vision; nothing here builds them.
+
 ## The snail and the hermit crab
 
 The git-native agent is like a snail: the git log is the silver trail showing where it has been. As it grows, it leaves behind usable shells — snapshots of working code, docs, identity, and memory up to that point.
 
 A local clone does **not** join the sky pipeline. It does not phone home for thought. It is a shell left on the beach.
 
-Then a **hermit crab** moves in: a Pi, a laptop, an Oracle machine, any local runtime. The hermit crab has its own brain and its own life — a local model, or its human's key. The shell gives it everything the sky agent knew: code, docs, identity, memory. The crab walks around in it, does local work, and never reports back up the chain.
+Then a **hermit crab** moves in: a Pi, a laptop, an Oracle machine, any local runtime. The hermit crab has its own brain and its own life — a local model, or its human's key. The shell gives it everything the sky agent knew: code, docs, identity, memory. The crab walks around in it, does local work, and never reports back up the chain. (Mechanically: a local run touches GitHub only if you give it a `GH_TOKEN`; then `comment_issue`/`create_issue` post to the clone's `origin`.)
 
 The crab may leave bottles — issues, notes, messages — for the sky agent to find later. And when the sky agent has grown a better shell, the crab can move into the newer one. But it is not subordinate to the sky pipeline. It is its own creature, wearing a borrowed shell.
 
@@ -17,7 +22,7 @@ A usable shell is a snapshot containing:
 - **Code** — the working application at that commit.
 - **Docs** — everything in `docs/`, the agent's own Wikipedia.
 - **Identity** — `ONBOARDING.md`, `AGENTS.md`: who the agent is, how it works.
-- **Memory** — `MEMORY.md` and the git log: what it has done and learned.
+- **Memory** — `CONTEXT.md`, `MEMORY.md`, `conversation/`, `reports/` and the git log: what it has done, said and learned.
 
 `git clone` at any commit is a shell. Tag the good ones.
 

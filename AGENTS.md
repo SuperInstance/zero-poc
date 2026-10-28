@@ -20,9 +20,13 @@ GitHub Actions, is the agent. It is called a Purple Pincher zero.
   `telegram` workflow (Telegram messages via the bridge worker).
 - **Brain**: an LLM, reached only through the vault. Never directly, never with
   keys in the repo.
-- **Hands**: vault-proxied APIs — GitHub, Cloudflare, Telegram, LLM. Extensible
-  (see `docs/plugins.md`).
-- **Memory**: git itself (see `docs/memory.md`).
+- **Hands**: the think loop's tools — files, a shell on the runner (with
+  outbound internet), git, the `gh` CLI, and vault-proxied APIs (LLM, GitHub,
+  Cloudflare). Telegram goes through a separate bridge worker, not the vault.
+  Extensible (see `docs/plugins.md`; the tool index is `TOOLS.md`).
+- **Memory**: `CONTEXT.md` (working memory), `MEMORY.md` (event log),
+  `conversation/` (the dialogue), `reports/` (finished work), and the git log
+  under all of it (see `docs/memory.md`).
 
 The full component map, request flows, and file-by-file reference live in
 `docs/architecture.md`. Known issues, quirks, and vestigial code live in
@@ -51,7 +55,10 @@ worker. If you ever feel tempted to put a key in a file, stop and read
   acknowledges; the next think cycle acts. This is also the agent-to-agent
   channel (see `docs/i2i.md`).
 - **Telegram**: message its bot, if the fork owner configured one. The
-  `telegram` workflow hears, thinks via the vault, and replies.
+  `telegram` workflow records the message in `conversation/inputs/`, routes
+  it onto `TASKS.md`, thinks via the vault, records the reply in
+  `conversation/outputs/`, and sends it. It cannot message first: work the
+  loop finished rides back on the next reply (`reports/README.md`).
 - **TASKS.md**: the onboard task board. The heartbeat checks it every cycle.
 
 ## How to teach it things
@@ -60,7 +67,12 @@ worker. If you ever feel tempted to put a key in a file, stop and read
   alignment. The alignment section orients it around understanding its own
   system and explaining it to humans and agents alike.
 - Add tasks to `TASKS.md` or open issues.
-- It learns by doing and writes what it learns into `MEMORY.md` and these docs.
+- Put live facts in `CONTEXT.md` — the working memory the loop reads every
+  cycle (rewritten by hand for now). The loop appends its cycle outcomes to
+  `MEMORY.md` itself, and can edit any of these files and the docs.
+- The loop reads `ONBOARDING.md`, `CONTEXT.md`, `TASKS.md`, `TOOLS.md`, open
+  issue bodies and `git log -5` every cycle — not `docs/`, not this file.
+  Teach through what it reads.
 
 ## How to extend it
 
@@ -71,8 +83,9 @@ everything else.
 
 ## How it remembers
 
-See `docs/memory.md`. Short version: `MEMORY.md` is the digest; the git log is
-the full, rewindable history. Append, never edit.
+See `docs/memory.md`. Short version: `CONTEXT.md` is rewritten; everything
+else — `MEMORY.md`, `conversation/`, delivered reports, the git log — is
+append-only. The git log is the full, rewindable history.
 
 ## Explaining this system (your duty)
 

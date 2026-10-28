@@ -45,16 +45,21 @@ marker (`- [ ]` / `- [x]`) stripped and whitespace collapsed.
   (`(telegram ...)` in its text) that sat in `## Open` and now sits in
   `## Done` — or is checked `- [x]` anywhere — gets a report whose body
   is `Closed on the board: "<task text>".` (task text cut to 300
-  chars). Files are named `<UTC %Y-%m-%dT%H%M%SZ>-<i>.md`, with a `-2`,
-  `-3` suffix on collision. A task whose `source-hash` already appears
-  in `pending/` or `delivered/` is never reported twice. A reports
-  failure never fails the think cycle.
+  chars). At most 5 reports per cycle. Files are named
+  `<UTC %Y-%m-%dT%H%M%SZ>-<i>.md`, with a `-2`, `-3` suffix on
+  collision. A task whose `source-hash` already appears in `pending/`
+  or `delivered/` is never reported twice — and because `delivered/`
+  is permanent, the same task text closed again later is not reported
+  again either. A reports failure never fails the think cycle.
 - **The agent itself** — `kind: written`. When the loop finishes work
   the human asked for, it may write its own report into
   `reports/pending/` with `write_file`, saying what the outcome
   actually was (the mechanical report only says the task closed). Use
   the same header; include `source-hash` and `task` when the report is
-  about a board task, so the producer won't duplicate it.
+  about a board task, so the producer won't duplicate it. As of v0.8.2
+  this path has not been exercised end-to-end: no `written` report has
+  been filed or delivered, and the loop's context does not include this
+  file — it learns of `reports/pending/` only from `ONBOARDING.md`.
 
 ## Delivery
 
@@ -63,8 +68,8 @@ The telegram workflow, on the human's next message:
 1. **Assemble context** reads `reports/pending/*.md` oldest first (by
    filename) and picks up to **5 files / 2,000 body chars**; a single
    oversized report is cut to the budget rather than blocking the
-   queue. The voice is told the reports are attached and not to repeat
-   them.
+   queue. The voice is given the report text and told the block is
+   added after it writes and must not be reproduced or imitated.
 2. **Record reply** prepends the block to the reply, then a blank line:
 
    ```
@@ -73,9 +78,12 @@ The telegram workflow, on the human's next message:
    - <body of report 2, one line>
    ```
 
-   So the recorded output in `conversation/outputs/` is exactly what
-   was delivered, block included.
-3. **Reply via bridge** sends it.
+   The reply part is trimmed so block plus reply stay within the
+   4,000-char send cap. So the recorded output in
+   `conversation/outputs/` is exactly what was delivered, block
+   included.
+3. **Reply via bridge** sends it; the step fails unless the bridge
+   answers `ok: true`.
 4. **Mark reports delivered** moves each delivered file from
    `pending/` to `delivered/` and commits
    `telegram: reports delivered (<turn stem>)`. It runs only if every

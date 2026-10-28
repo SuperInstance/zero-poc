@@ -8,6 +8,14 @@ communicator's `docs/research/PAPERS.md` (shared fleet corpus). Everything
 below is either derived here, measured here with the model named, or
 attributed.
 
+**What this repo implements at v0.8.2** (`agent.py`): one Choice question
+(`actionable_work`), normalized confidence, skip on "no" at ≥ 0.6
+(`GATE_CONFIDENCE_THRESHOLD`), fail-open on any error, and the 6-hour duty
+cycle (§1, §4, §7). The blind veto (§3) exists only in the observe-only
+shadow minigate, not in the live gate; no fail-closed gate (§4) exists
+here. The fleet measurements are attributed to sibling repos and are not
+reproducible from this tree.
+
 ## 1. Confidence scales are not portable; normalize before thresholding
 
 The two decision-model backends this agent uses report "confidence" in
@@ -65,9 +73,13 @@ Measured (gate-replay, live Jev, combined git-history corpus + adversarial
 probes): **95% idle-skip at 10.5% false-idle**. The decisive detail: the
 false-idle class was dominated by `llm_error`-retry rows — transient
 failures that a probability gate reads as "nothing actionable." Hence the
-law, now fleet-wide:
+law, adopted fleet-wide as a rule:
 
     A deterministic blind veto sits in front of ANY model gate.
+
+In this repo the rule is met only by the shadow minigate (`RUN_BLIND`).
+`agent.py`'s live gate has no veto: an issue-fetch failure reaches the model
+as the text "open issues: fetch failed, count unknown".
 
 Jev-lattice independently confirmed the same shape with compiled
 predicates: trusted to say NO they gave 0 wrong GOs at half the cost;
@@ -81,10 +93,11 @@ models propose.
   run the full cycle). A wasted cycle is cheap; sleeping through work is
   not. Live-validated: a cold-start timeout once fell through to the full
   loop exactly as designed.
-- **Act/review/block gates fail CLOSED** (no gate answered → block). These
+- **Act/review/block gates fail CLOSED** (no gate answered → block; none
+  exists in this repo). These
   gates guard actions, where the error costs invert: an unanswered gate
   passing you through is the false-idle of authority. A gate that did not
-  answer may not act as if it had. (gitpp-gate's law, adopted repo-wide.)
+  answer may not act as if it had. (gitpp-gate's law.)
 
 One rule generates both: **fail toward whichever error is cheaper for THAT
 decision**, and say which policy each gate uses in its docstring.
@@ -116,6 +129,10 @@ A gate answers "is there work NOW?" It decays without new evidence, and a
 cheap gate makes it cheap to never look. The duty-cycle rule (vision
 PLAN, Sprint 0): forced probe after > 6 h without substantive work,
 latched, reset only by substantive work — **count actions, not wakeups**.
+In code: `PROBE_AFTER_HOURS = 6`, clock `last_substantive_utc` in
+`.agent-state.json`, substantive = a successful `write_file`, `run_shell`,
+`run_tests`, `git_commit` or `git_push_branch` call, or any cycle given an
+explicit task.
 Live-validated by accident: a 15.5 h stale clock forced a probe past the
 gate exactly as designed. The gate is a shutter, not a conscience.
 

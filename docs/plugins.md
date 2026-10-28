@@ -8,6 +8,10 @@ what will happen.
 
 ## The pattern
 
+The vault worker's code is **outside this repo**. Steps 1–2 describe the
+worker's convention as its owner documented it; this tree cannot verify the
+names. Step 3 is the client contract, and it is what the code here does.
+
 1. **Secret**: stored in the vault worker as `VAULT_<SERVICE>_TOKEN`
    (Cloudflare dashboard → Workers → vault worker → Settings → Variables and
    Secrets). Never in the repo. Ever.
@@ -26,6 +30,12 @@ what will happen.
    The vault verifies the OIDC token, checks the repo/workflow allowlist,
    looks up the secret, runs the handler, and returns
    `{ "success": true, "result": {...} }`. The secret never leaves the worker.
+4. **Reach it from the agent**: workflows call `/proxy` with `curl` + `jq`
+   (see `telegram.yml`, `react.yml`). The think loop reaches only the
+   services it has tools for — `api_github` and `api_cloudflare` pass any
+   action through; the LLM is `llm_think()`. A new service needs a new tool
+   in `agent.py` (`execute_tool` + a `PERMISSIONS` tier) and a `TOOLS.md`
+   row, or the loop cannot call it.
 
 ## Worked example: the LLM service
 
@@ -37,19 +47,26 @@ what will happen.
   `LLM_MODEL` (default model).
 - **Call**: `{ "service": "llm", "action": "complete",
   "params": { "messages": [{ "role": "user", "content": "..." }],
-  "max_tokens": 500 } }`
-- **Returns**: `{ "content": "...", "model": "...", "usage": {...} }`
+  "max_tokens": 500 } }` — telegram.yml's shape. `agent.py` sends
+  `"model": "default"` instead of `max_tokens`; react.yml adds a `system`
+  param and `max_tokens: 400`.
+- **Returns**: `{ "success": true, "result": { "content": "..." } }` — the
+  code reads `result.content` and nothing else.
 
 ## Worked example: Telegram
 
-Telegram is a plugin with its own small worker (the bridge):
+Telegram is a plugin with its own small worker (the bridge), not a `/proxy`
+service:
 
-- **Secret**: `TELEGRAM_BOT_TOKEN` on the bridge worker.
+- **Secret**: `TELEGRAM_BOT_TOKEN` on the bridge worker *(outside the repo)*.
 - **In**: Telegram sends updates to the bridge `/webhook`; the bridge fires a
-  `repository_dispatch` (`telegram_message`) to wake the repo. Needs
-  `VAULT_GITHUB_TOKEN` on the bridge worker to dispatch.
-- **Out**: the agent POSTs `{ "chat_id": ..., "text": "..." }` to the bridge
-  `/send`; the bridge delivers it via the Telegram API.
+  `repository_dispatch` (`telegram_message`, payload `text`, `username`,
+  `chat_id`) to wake the repo. Needs `VAULT_GITHUB_TOKEN` on the bridge
+  worker to dispatch *(outside the repo)*.
+- **Out**: telegram.yml POSTs `{ "chat_id": ..., "text": "..." }` to the
+  bridge `/send` (URL from the repo variable `TELEGRAM_BRIDGE_URL`, else a
+  hardcoded fallback) with no OIDC token; the step fails unless the bridge
+  answers `ok: true`. The bridge delivers it via the Telegram API.
 - The agent never touches the Telegram API directly.
 
 ## Checklist for a new plugin
@@ -57,6 +74,7 @@ Telegram is a plugin with its own small worker (the bridge):
 - [ ] Secret stored in the vault worker as `VAULT_<SERVICE>_TOKEN`
 - [ ] `proxy<Service>` handler written, registered in `proxyAction`
 - [ ] Vault worker redeployed
+- [ ] If the think loop needs it: a tool in `agent.py`, a test, a `TOOLS.md` row
 - [ ] This file (or a new doc under `docs/`) updated: what the service does,
       every action, every param, what comes back, and one worked example
 

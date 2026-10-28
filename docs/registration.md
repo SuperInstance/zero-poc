@@ -27,3 +27,13 @@ Keys never leave Cloudflare.
 If your fork stays silent after registration, check: workflows enabled
 (Actions tab), the issue really says "Register", and the vault allowlist
 spelling of `owner/repo`.
+
+Optional settings a fork may add (none hold a model key; names from the
+workflows):
+
+- Repo variable `VAULT_URL` — overrides the hardcoded vault URL.
+- Repo variable `TELEGRAM_BRIDGE_URL` — your own Telegram bridge worker.
+  Without it, `telegram.yml` falls back to the original's bridge URL.
+- Repo secret `TYPESAFE_API_KEY` — lets the idle gate answer
+  (`docs/system1.md`). think.yml's comment calls the gate inert without
+  it; any gate error runs the cycle.

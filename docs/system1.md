@@ -6,6 +6,15 @@ this repo's real state). Audience: the agent and any maintainer deciding
 whether to build the idle gate. Everything below is verified unless
 marked otherwise; sources linked at the end.
 
+**Status at v0.8.2** (from `agent.py` and `think.yml`): the idle gate is
+code (`gate_says_work()`), with two providers. In Actions, think.yml
+points it at hosted TypeSafe Jev (`DECISION_URL=https://api.typesafe.ai`,
+`DECISION_MODEL=jev-preview`, key from the `TYPESAFE_API_KEY` secret); no
+Actions cycle has yet recorded `gated_idle`. A separate **shadow gate**
+(vendored minigate) runs before every cycle and only records its verdict.
+The 6-hour duty cycle bypasses both. The research sections below are the
+2026-10-15 record; where the design changed since, it says so inline.
+
 ## What System 1 models are
 
 A new (Sept 2026) model class, named for Kahneman's fast/slow thinking
@@ -26,7 +35,7 @@ tasks). Jev is closed; an open ecosystem followed:
   decima, … Big vendors are converging on the same pattern (Microsoft
   "Decision-1", LiteLLM decision-model endpoints).
 
-Why it matters here: zero currently spends a **full System-2 vault LLM
+Why it mattered here (2026-10-15): zero spent a **full System-2 vault LLM
 cycle on every heartbeat just to conclude "awaiting instructions"** —
 visible as dozens of identical MEMORY.md entries. A System-1 gate answers
 "is there actionable work?" in milliseconds for free, locally.
@@ -70,10 +79,16 @@ below, now real code with tests (tests/test_agent.py, TestIdleGate):
    `GATE_CONFIDENCE_THRESHOLD` (0.6).
 2. **Client**: `decide(questions, state)` → POST
    `{DECISION_URL}/v1/decisions`; parses `answers.{id}.choice/.confidence`.
+   *Since Sprint 2 (2026-10-18):* with `DECISION_API_KEY` set it POSTs
+   `{DECISION_URL}/v1/systemone` with Bearer auth instead, and
+   `normalize_decision_answers()` maps TypeSafe probabilities onto the same
+   confidence scale (|2p−1|; see `docs/decision-science.md` §1).
 3. **`build_gate_digest()`**: counts + first lines of open TASKS.md
-   items, telegram inbox, open issue titles, last cycle outcome —
-   distilled prose, never raw markdown (attempt-1 lesson baked into a
-   code comment).
+   items (first 5), the telegram task count, open issue count and titles
+   (first 5, or "fetch failed, count unknown") — distilled prose, never
+   raw markdown (attempt-1 lesson baked into a code comment). *Changed in
+   Sprint 0:* the "last cycle outcome" line was removed — the gate must
+   never see its own prior verdict (it caused an idle latch).
 4. **Policy in `run_agent_loop()`**: before the first `llm_think()`, and
    ONLY for schedule cycles with no explicit `--task` (a human asking
    directly always bypasses the gate). Confident "no" → `save_state(
@@ -84,11 +99,19 @@ below, now real code with tests (tests/test_agent.py, TestIdleGate):
    unknown") dropped laya's confidence to 0.479 < 0.6, so the gate
    correctly stepped aside and the loop ran.
 5. **Where it runs**: local/hermit-crab shells via Ollaya (pairs with
-   LOCAL_LLM_URL as a tiered brain: decision gate + local System 2). In
-   Actions it is dormant until a `decision` vault service exists
-   (docs/plugins.md pattern).
+   LOCAL_LLM_URL as a tiered brain: decision gate + local System 2).
+   *Superseded for Actions:* the plan was a `decision` vault service;
+   Sprint 2 instead wired TypeSafe Jev directly in think.yml (status
+   above). The duty cycle (Sprint 0) forces a full cycle after 6 h
+   without substantive work, gate or no gate.
+6. **Shadow gate (Sprint 1)**: think.yml's `Shadow gate (observe only —
+   never skips a cycle)` step runs the vendored minigate
+   (`.github/scripts/minigate/`) on the same digest and stores `SKIP` /
+   `RUN` / `RUN_BLIND` as `shadow_gate` in `.agent-state.json`. It has no
+   authority; its blindness veto (a digest saying "fetch failed" is always
+   RUN) exists only there — `gate_says_work()` has no such veto.
 
-Later applications of the same client, in rough value order: reflex-tier
+Later applications of the same client — none built yet — in rough value order: reflex-tier
 classification for incoming tasks (ONBOARDING.md's Known/Semi-known/
 Unknown tiers made real), react.yml triage (task vs question vs noise —
 Ollaya ships a built-in `agent`/`triage` preset), and guardrailing tool

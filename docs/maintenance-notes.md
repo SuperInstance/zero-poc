@@ -8,7 +8,8 @@ says where to look and what the evidence is. Companion to
 
 Updated later the same day after the v0.3 owner maintenance session — the
 statuses below reflect it, and the change log at the bottom lists exactly
-what changed.
+what changed. Re-checked against the code at v0.8.2; the newest entries
+are "Known issues (v0.8 era)" at the bottom.
 
 ## Verified live behavior (as of 2026-10-15)
 
@@ -107,14 +108,16 @@ entirely.
 ## Quirks and sharp edges (know before you edit)
 
 - **`act.py` is dead code** — v0.1 single-decision executor; nothing invokes
-  it (README's "the hands" description is historical). Change `agent.py`, not
+  it (older READMEs called it "the hands"; that is historical). Change `agent.py`, not
   `act.py`.
 - **`.agent-state.json` (`STATE_FILE`) is implemented as of v0.3** — was
   vestigial since seed; now `load_state()`/`save_state()` persist
   `started_utc`/`task`/`outcome` (`completed:...`/`max_iterations`/
   `llm_error`)/`iterations_used` on every exit path, and think.yml commits
-  it with each heartbeat — git log doubles as vital signs. Not yet fed
-  back into `build_context()`; wiring it in is the obvious next step.
+  it with each heartbeat — git log doubles as vital signs. Since Sprint 0
+  it also carries `last_substantive_utc` (read back for the duty cycle)
+  and `shadow_gate`. Still not shown to the model by `build_context()`;
+  wiring it in is the obvious next step.
 - **`GH_TOKEN` is load-bearing since v0.3** — `agent.py` now uses `gh`
   with it directly for open-issue listing (vault fallback path) and for
   `comment_issue`/`create_issue` (posts as `github-actions[bot]`, the
@@ -155,10 +158,13 @@ entirely.
 - **`git_push_main` "deferred" is not enforced** — no such tool exists, and
   think.yml's final step pushes to main regardless. The permission tier
   documents intent; the workflow enforces reality.
-- **The think loop never reads `docs/`, `AGENTS.md`, or issue comments** —
-  `build_context()` includes only ONBOARDING.md, MEMORY.md, TASKS.md, open
-  issue *bodies*, `git log -5`, `scratch/` names, and (since v0.3) a
-  "## Fleet Bottles" section: first line of each `for-fleet/*.md`, max 5.
+- **The think loop never reads `docs/`, `AGENTS.md`, `conversation/`, or
+  issue comments** — `build_context()` includes only ONBOARDING.md[:6500],
+  CONTEXT.md[:2000] (MEMORY.md tail only if CONTEXT.md is missing),
+  TASKS.md[:2000], TOOLS.md[:2000], open issue *bodies*, `git log -5`,
+  `scratch/` names, and (since v0.3) a "## Fleet Bottles" section: first
+  line of each `for-fleet/*.md`, max 5. Note TOOLS.md is ~7k chars, so
+  the loop sees only its top.
   I2I bottles dropped per `docs/i2i.md` are now visible to the think loop;
   docs and AGENTS.md still are not — teach via the files it reads, or tell
   it to `read_file` the docs.
@@ -231,7 +237,9 @@ New next steps, in rough impact order:
     explicit `--task` bypasses. Benchmarks that justified it: laya
     0.19/0.81, winnow 0.004/0.995, tev1 92%/97% idle/busy. Dormant in
     Actions until a vault `decision` service exists. See
-    `docs/system1.md`.
+    `docs/system1.md`. (Superseded 2026-10-18 by Sprint 2: think.yml
+    wires TypeSafe Jev directly; it answers only once the
+    `TYPESAFE_API_KEY` secret is set.)
 
 ## v0.3 change log (2026-10-15)
 
@@ -332,3 +340,71 @@ claim was independently verified before shipping.
     log-only until TRUST.md routing lands (Sprint 2).
 
 Tests: 58 (was 44 at v0.4). All hermit-bench validated before each push.
+
+## Sprint 2 and v0.4–v0.8.2 (2026-10-18 → 10-28)
+
+The per-version change log for these lives in the commit messages and in
+the header notes of `telegram.yml` (v0.4 conversation record, v0.5.1
+silence fix, v0.6 voice memory, v0.6.1 dry-run mode, v0.7 corpus hooks,
+v0.8 board reports, v0.8.1 acceptance fix, v0.8.2 gate) and `think.yml`
+(v0.8 "File board reports"). Sprint 2 (2026-10-18, `9481dc5`): `decide()`
+gained the TypeSafe provider (`/v1/systemone`, Bearer key) and think.yml
+the `DECISION_*` env, inert until the `TYPESAFE_API_KEY` secret exists.
+Tests: 63 at v0.8.2 (`python3 -m pytest tests/` → 63 passed); all of them
+cover `agent.py` — no test exercises a workflow.
+
+## Known issues (v0.8 era)
+
+### 6. Report dedup is by task text, permanently
+**Status**: BY DESIGN — know it before relying on reports.
+**Evidence**: think.yml's "File board reports" step hashes the normalized
+task text (checkbox stripped, whitespace collapsed; `sha1[:12]`) and skips
+any hash already in `reports/pending/` or `reports/delivered/`.
+`delivered/` is permanent, so the same task text closed twice is reported
+once — the second closure is silent.
+**Where to look**: `think.yml` (`seen` set); contract in
+`reports/README.md`.
+
+### 7. The v0.8.2 gate catches imitation by signature phrase only
+**Status**: MITIGATED, not closed.
+**Evidence**: the Record step replaces a draft only if it contains "while
+you were away" or "loop finished" (case-insensitive) while a block is being
+attached. A fabricated outcome phrased without those words passes. The
+other line of defense is the briefs' standing rule — never state an
+outcome that is not in the record or in an attached report (both
+`SYSTEM_PROMPT`s in telegram.yml). That rule is prompt text, and v0.8.1
+showed prompt text alone can fail.
+**Where to look**: `telegram.yml`, "Record reply" and the THE GATE header
+note.
+
+### 8. Two fabricated test outputs stand in the record
+**Status**: KEPT ON PURPOSE.
+**Evidence**: `conversation/outputs/2026-10-28T034207Z.md` and
+`2026-10-28T034319Z.md` (`via: cli-test`, dry-run) carry an invented
+"weather in Sitka" outcome — the v0.8 and v0.8.1 acceptance failures. The
+record is append-only, so they are not edited; the gate is the fix, not an
+edit. The voice can still read them back through the history window or the
+reference pull — that is how v0.8.1 re-copied its own fabrication.
+`2026-10-28T034516Z.md` shows the gate working (replaced, noted in the
+header).
+
+### 9. Concurrent think/telegram pushes can race
+**Status**: OPEN (pre-existing).
+**Evidence**: think.yml commits at cycle end and runs a bare `git push`;
+telegram.yml pushes from three steps ("Log Telegram event", "Record reply",
+"Mark reports delivered"), also bare. None pulls or rebases first. If one
+workflow pushes while the other is running, the other's push is rejected
+as non-fast-forward. For think, the step fails and the cycle's work is not
+pushed. For telegram's "Record reply", the step fails, "Reply via bridge"
+is skipped, and the fallback sees the reply already written on disk and
+stays quiet — the human gets no answer, and the reply is not in the repo.
+**Where to fix**: the workflows (a `git pull --rebase` before each push,
+or a `concurrency:` group shared by both). Not fixed here.
+
+### 10. "Written" reports are an unexercised contract
+**Status**: OPEN.
+**Evidence**: `reports/README.md` lets the loop file its own `kind:
+written` report via `write_file`. No such report has ever been filed or
+delivered (`reports/delivered/` is empty at v0.8.2), and the loop's
+context does not include `reports/README.md`. Treat the path as
+untested until one goes end-to-end.

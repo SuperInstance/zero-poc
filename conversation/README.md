@@ -33,9 +33,10 @@ Each file is markdown with a small header:
 ---
 from: Casey            (inputs)  /  zero  (outputs)
 at: 2026-10-22T19:33:06Z
-via: telegram
+via: telegram                      (or the payload's `via`, e.g. cli-test)
 turn: 2026-10-22T193306Z
 in-reply-to: inputs/<stem>.md      (outputs only)
+note: ...                          (only when something is unusual)
 ---
 
 <the message text, in full>
@@ -44,14 +45,24 @@ in-reply-to: inputs/<stem>.md      (outputs only)
 Inputs record the message **in full** — the 200-char flattening in
 `TASKS.md` is a routing copy, not the record.
 
+The `note:` line marks a turn that is not a plain delivered exchange:
+`dry-run test - recorded, not delivered` (a v0.6.1 test dispatch, both
+files), `fallback reply — the think step failed this turn` (the hiccup
+line), or `voice reply replaced - it imitated the reports block (v0.8.2
+gate)`. An output may begin with the "While you were away, my loop
+finished:" block — the workflow attaches it (see `reports/README.md`).
+An input with no output is a turn that got no recorded reply:
+`2026-10-22T232941Z` is the v0.5 silence bug's receipt.
+
 ## Rules
 
 - **Append-only.** A recorded turn is never edited. A correction is a
   new turn.
-- **Writers:** only the telegram workflow writes turns (v0.4). The
-  record step commits the output *before* the bridge delivers it —
-  memory-first, symmetric with the inbound log: the record is
-  primary, the send is delivery.
+- **Writers:** only the telegram workflow writes turns (v0.4): `Log
+  Telegram event` the input, `Record reply` the output (or `Fallback
+  reply if Think failed`). The record step commits the output *before*
+  the bridge delivers it — memory-first, symmetric with the inbound log:
+  the record is primary, the send is delivery.
 - **Provenance is stated, not implied.** Machine-recorded turns are
   the default. Anything else says so in its header — the seed turn
   below is marked `recorded: owner-reported` because its reply
@@ -61,7 +72,11 @@ Inputs record the message **in full** — the 200-char flattening in
 
 So that other processes — the think loop, skills, tools not yet
 written — can read the dialogue as their substrate and work *because
-of* it: summarize it, file it, learn from it, answer it better. The
+of* it: summarize it, file it, learn from it, answer it better. Today
+the one automatic reader is the telegram `Assemble context` step (the
+last 10 turns within 12,000 chars, the first turn ever, and up to 3
+turns the new message refers back to). The think loop's context does
+not include this folder; it can `read_file` it. The
 conversation is the input everything else in this repo is ultimately
 for. It gets a folder of its own, inputs and outputs, like anything
 else that matters here.

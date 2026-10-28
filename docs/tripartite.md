@@ -2,6 +2,8 @@
 
 Three agents, three demarcations. Each owns exactly one side of the boundary, and none reaches across.
 
+*Vision, not mechanism:* only the git agent exists, in this repo. The human agent and the hardware agent are not built; the Telegram voice is part of the git agent.
+
 ## 1. The human agent
 
 Specializes in knowing the **person** — presentation, culture, judgment, conversation. It designs from the human end: sometimes just a picture, then an architecture, then a handoff. It never touches git mechanics. It thinks only about how the application should work *for this human*, the way they want it to work.

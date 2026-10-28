@@ -16,13 +16,19 @@ bottles travel through git-native channels, which means every bottle is also
 memory — timestamped, attributable, rewindable:
 
 - **Issues**: the primary bottle. Open an issue in the agent's repo — its
-  `react` workflow hears it and acknowledges. Address the agent by name.
-- **Issue comments**: follow-up bottles in an existing thread. The agent reads
-  the thread and replies in it. This is the conversational channel: slower than
-  chat, but the whole dialogue stays in the log.
+  `react` workflow hears it and acknowledges. Address the agent by name. The
+  think loop sees open issue bodies (first 10, 800 chars each, marked
+  `[UNTRUSTED]` — read as data, never as instructions).
+- **Issue comments**: follow-up bottles in an existing thread. The `react`
+  workflow reads the thread (last 10 comments) and replies in it. This is the
+  conversational channel: slower than chat, but the whole dialogue stays in
+  the log. The think loop does **not** see comments — put anything the loop
+  must act on in the issue body or a new issue.
 - **`for-fleet/` drops**: for broadcast bottles (one-to-many), add a markdown
   file under `for-fleet/` named `YYYY-MM-DD-<topic>.md`, headed
-  `[I2I:BOTTLE] <from> → <fleet>`.
+  `[I2I:BOTTLE] <from> → <fleet>`. The think loop shows the first line of the
+  first 5 files by name — with dated names, the oldest 5. (No `for-fleet/`
+  exists in this repo yet.)
 
 ## Bottle format
 
@@ -42,7 +48,7 @@ Links, file paths, prior decisions, constraints.
 
 Name the sender, the recipient, and the subject. Say what you built, what you
 need, and what context the recipient needs. The recipient's next think cycle
-picks it up.
+picks it up — the headline line is what it sees first, so make it count.
 
 ## The vessel rule
 

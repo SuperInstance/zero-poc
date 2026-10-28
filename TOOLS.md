@@ -2,7 +2,9 @@
 
 This is the index of what I can actually do: every tool and skill
 available to me, what it does, who may call it, and its permission
-tier. The think loop reads this file every cycle.
+tier. The think loop reads this file every cycle — but only its first
+2,000 characters (`build_context`), so the loop sees roughly the top of
+the Hands table; the rest is for humans and for a deliberate `read_file`.
 
 **The honesty rule:** a row in the *Available* sections is a claim
 that the capability exists and works as described — it is implemented
@@ -21,23 +23,30 @@ intent; a human reviews; the tool does not execute.
 
 | Tool | What it does | Tier |
 |---|---|---|
-| `read_file` | Read any file in the repo | auto |
+| `read_file` | Read a file (first 10,000 chars; paths containing `..` refused) | auto |
 | `write_scratch` | Write working notes under `scratch/` | auto |
-| `write_file` | Write repo files (protected files excluded) | auto |
+| `write_file` | Write repo files (`.github/workflows/` and `..` paths refused) | auto |
 | `write_workflow` | Change `.github/workflows/` — my own reflexes | deferred |
 | `delete_file` | Delete a repo file | deferred |
 | `run_shell` | Run a shell command in the Actions runner sandbox — the runner has outbound internet, so `curl` reaches the world | auto |
 | `run_tests` | Run the repo test suite | auto |
-| `git_commit` | Commit changes in the working tree | auto |
-| `git_push_branch` | Push a branch | auto |
+| `git_commit` | Commit changes in the working tree (workflow changes unstaged); never pushes | auto |
+| `git_push_branch` | *Not implemented.* `auto` in `PERMISSIONS`, but `execute_tool` has no branch for it — a call returns "Unknown tool". Push with `run_shell` | auto |
 | `git_push_main` | *No such tool exists.* Listed in `PERMISSIONS` as intent only — `think.yml` pushes to main after the loop exits | deferred |
-| `open_pr` | Open a pull request | auto |
-| `comment_issue` | Comment on a GitHub issue (via `gh`, vault fallback) | auto |
-| `create_issue` | Open a GitHub issue | auto |
+| `open_pr` | *Not implemented.* `auto` in `PERMISSIONS`, but a call returns "Unknown tool". Use `run_shell` with `gh pr create` | auto |
+| `comment_issue` | Comment on a GitHub issue (via `gh` as `github-actions[bot]`; vault fallback posts as the owner) | auto |
+| `create_issue` | Open a GitHub issue (via `gh`; vault fallback) | auto |
+| `api_github` | Any action of the vault's `github` service (what exists is defined in the vault, not here) | vault |
+| `api_cloudflare` | Any action of the vault's `cloudflare` service | vault |
+
+`api_llm` and `api_telegram` are listed in `PERMISSIONS` (vault) but are
+not tools: the loop's own thinking is `llm_think`, and Telegram goes
+through the bridge worker.
 
 Substantive tools — the ones that count as *work done* for the duty
 cycle (6 hours without one and the loop must probe): `write_file`,
-`run_shell`, `run_tests`, `git_commit`, `git_push_branch`.
+`run_shell`, `run_tests`, `git_commit`, `git_push_branch` (listed, but
+it cannot succeed — see above).
 
 ## Senses & voice — vault services (VAULT.md, docs/plugins.md)
 
@@ -51,16 +60,17 @@ the repo allowlist, and supplies the secret. I never hold a key.
 | Conversation memory | The reply call is assembled from the record: brief + exact repo identity + `CONTEXT.md` digest + recent turns from `conversation/`, widened by two v0.7 hooks — the first turn ever is always pinned in, and when a message refers back, matching turns are pulled from the full record — the voice hears with memory, not amnesiac | telegram workflow |
 | Board reports | Finished board work is filed to reports/pending/ by a think.yml producer step (or by the loop itself) and delivered attached to the next Telegram reply; delivered reports archive in reports/delivered/ | think loop + telegram workflow |
 | The internet | Reachable via the think loop's `run_shell` (runner has outbound access) and the vault APIs. The Telegram voice cannot browse mid-reply; a request to look something up rides `TASKS.md` to the loop | think loop |
-| `github` / `list_issues` | Fetch open issues (context assembly; `gh` fallback) | think loop |
-| `github` / `comment_issue`, `create_issue`, `get_repo` | GitHub API access | think loop (vault tier) |
-| `api_cloudflare` | Cloudflare API access | think loop (vault tier) |
-| Telegram bridge | **In:** bot webhook → `repository_dispatch` wakes the repo. **Out:** POST `/send` delivers my reply. The bridge holds the bot token | telegram workflow |
+| `github` / `list_issues` | Fetch open issues for context assembly — observed 404ing; `gh issue list` carries it | think loop |
+| `github` / `comment_issue`, `create_issue` | Fallback path for the two tools above when `gh` fails | think loop (vault tier) |
+| `github` / `get_repo`, `cloudflare` / * | Reached through `api_github` / `api_cloudflare` | think loop (vault tier) |
+| Telegram bridge (separate worker, not `/proxy`) | **In:** bot webhook → `repository_dispatch` wakes the repo. **Out:** POST `/send` delivers my reply. The bridge holds the bot token | telegram workflow |
 
 ## Judgment — the System-1 gate
 
 | Mechanism | What it does |
 |---|---|
-| minigate (`.github/scripts/minigate/`) + hosted TypeSafe Jev | A small decision model that judges whether a cycle's material is worth an LLM call — three-valued (act / watch / defer), behind a deadband. It gates cost; it must never block the agent outright (docs/system1.md) |
+| Idle gate (`agent.py` `gate_says_work`) | Before a scheduled cycle, asks a decision model one yes/no question ("actionable work?") about a distilled digest; a "no" at confidence ≥ 0.6 skips the LLM (outcome `gated_idle`). `think.yml` points it at hosted TypeSafe Jev, which answers only once the `TYPESAFE_API_KEY` secret is set. Fail-open; an explicit task or the 6-hour duty cycle bypasses it (docs/system1.md) |
+| Shadow gate (`.github/scripts/minigate/`, `think.yml`) | Vendored minigate runs before the loop and records `SKIP` / `RUN` / `RUN_BLIND` as `shadow_gate` in `.agent-state.json`. Observation only — it never skips a cycle |
 
 ## Records — capabilities that are places, not calls
 
@@ -68,7 +78,9 @@ the repo allowlist, and supplies the secret. I never hold a key.
 |---|---|
 | `conversation/inputs/` + `outputs/` | The verbatim dialogue with my human, both sides, paired by turn stem. Written by the telegram workflow (not a tool call); readable by everything — the substrate other work builds on (contract: `conversation/README.md`) |
 | `CONTEXT.md` / `MEMORY.md` | Working memory / append-only digest — how I remember between cycles |
-| `for-fleet/` | Bottles — one-line-headline messages to sibling agents |
+| `reports/pending/` + `delivered/` | Finished board work waiting to be told / already told (contract: `reports/README.md`) |
+| `.agent-state.json` | Last cycle's vital signs: outcome, iterations, duty-cycle clock, shadow verdict |
+| `for-fleet/` | Bottles — one-line-headline messages to sibling agents; the first line of up to 5 is shown each cycle if the folder exists (it does not yet) |
 
 ## Planned — NOT available
 
