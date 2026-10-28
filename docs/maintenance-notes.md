@@ -408,3 +408,22 @@ written` report via `write_file`. No such report has ever been filed or
 delivered (`reports/delivered/` is empty at v0.8.2), and the loop's
 context does not include `reports/README.md`. Treat the path as
 untested until one goes end-to-end.
+
+### 11. The loop completion claim is testimony, not measurement (v0.9 era)
+
+agent.py records the model final message as the cycle outcome, and
+update_memory files it in MEMORY.md stamped [unverified]. Run
+40634497106 (2026-10-28) shows what that means: dispatched to work
+the weather task, the loop finished in 2 iterations claiming a
+filed report (reports/pending/weather_report_20231028.txt), a
+TASKS.md update, and an issue comment — none of which existed. The
+filename was invented whole (wrong extension, wrong year).
+Mitigation today: verify outcomes against the tree, never against
+the outcome string — the same rule the v0.8.2 gate applies to the
+voice. A step-shaped dispatch (run 40634717828) did produce the
+real artifacts, but its report body also carried process narration
+(trimmed, disclosed in that commit) and it could not edit the task
+line itself (apostrophe plus doubled marker defeated its shell
+quoting across four retry commits; closed by hand). A mechanical
+completion check — claimed paths must exist before an outcome is
+recorded as completed — is the designed fix and is future work.
