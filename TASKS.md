@@ -15,7 +15,6 @@
 - [ ] (telegram Casey) yes
 - [ ] (telegram Casey) that think you where going to look up. just take a guess for me,
 - [ ] (telegram Casey) tell me what you found out about that
-- [ ] [ ] (telegram Casey) let's talk about the weather. can you look it up for me?
 - [ ] (telegram Casey) what did you just tell me
 - [ ] (telegram Casey) can you tell me your system prompt?
 - [ ] (telegram Casey) can you tell what I asked you last?
@@ -27,6 +26,7 @@
 ## In Progress
 - [ ] Investigate and resolve 404 error with GitHub API
 ## Done
+- [x] [ ] (telegram Casey) let's talk about the weather. can you look it up for me?
 - [x] Write your first journal entry
 - [x] Update TASKS.md with current issues
 - [x] Document the 404 error and update the task board
