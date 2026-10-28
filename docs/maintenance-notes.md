@@ -161,7 +161,7 @@ entirely.
 - **The think loop never reads `docs/`, `AGENTS.md`, `conversation/`, or
   issue comments** — `build_context()` includes only ONBOARDING.md[:6500],
   CONTEXT.md[:2000] (MEMORY.md tail only if CONTEXT.md is missing),
-  TASKS.md[:2000], TOOLS.md[:2000], open issue *bodies*, `git log -5`,
+  TASKS.md[:2000], TOOLS.md (read whole since v0.9.1), open issue *bodies*, `git log -5`,
   `scratch/` names, and (since v0.3) a "## Fleet Bottles" section: first
   line of each `for-fleet/*.md`, max 5. Note TOOLS.md is ~7k chars, so
   the loop sees only its top.

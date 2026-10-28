@@ -2,9 +2,9 @@
 
 This is the index of what I can actually do: every tool and skill
 available to me, what it does, who may call it, and its permission
-tier. The think loop reads this file every cycle — but only its first
-2,000 characters (`build_context`), so the loop sees roughly the top of
-the Hands table; the rest is for humans and for a deliberate `read_file`.
+tier. The think loop reads this file whole every cycle
+(`build_context`) — so keep it tight: every row one line, and a
+capability that is not indexed here is not known to the loop.
 
 **The honesty rule:** a row in the *Available* sections is a claim
 that the capability exists and works as described — it is implemented

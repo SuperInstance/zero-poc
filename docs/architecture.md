@@ -219,7 +219,7 @@ Walkthrough of `run_agent_loop()`:
    `CONTEXT.md`[:2000] (working memory; `MEMORY.md`[-2000:] only if
    `CONTEXT.md` is missing), the task (from `workflow_dispatch` input, else
    "check TASKS.md and issues"), `TASKS.md`[:2000] (board, plus a legend
-   when `[commitment:]`/`[blast:]` stake tags appear), `TOOLS.md`[:2000]
+   when `[commitment:]`/`[blast:]` stake tags appear), `TOOLS.md` (read whole)
    (the first 2,000 chars of the tools index), open issues via
    `fetch_open_issues()` — vault `list_issues` first with an `gh issue
    list` fallback, source labeled, and on total failure an explicit
@@ -397,7 +397,7 @@ lives in the Cloudflare worker, not here.
 | `ONBOARDING.md` | identity, principles, alignment | human (agent may edit by design) |
 | `AGENTS.md` | operator's manual — how to run/extend/explain | human |
 | `TASKS.md` | kanban board the heartbeat checks | human + agent + telegram routing |
-| `TOOLS.md` | tools & skills index (first 2,000 chars read each cycle) | human (agent may edit) |
+| `TOOLS.md` | tools & skills index (read whole each cycle) | human (agent may edit) |
 | `CONTEXT.md` | working memory, rewritten (Facts table) | owner maintenance (agent may edit) |
 | `MEMORY.md` | append-only event log; read only as fallback | agent (`update_memory`, substantive done / max-iter; telegram log line) |
 | `conversation/` | the dialogue, both sides, paired by stem | telegram workflow |

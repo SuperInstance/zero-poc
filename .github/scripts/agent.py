@@ -628,8 +628,8 @@ def build_context(task_description=None):
     This defines the agent's ENTIRE world-view each iteration. Included:
     ONBOARDING.md[:6500] (identity + the mechanism), MEMORY.md[-2000:]
     (memory digest),
-    the task, TASKS.md[:2000], TOOLS.md[:2000] (the tools & skills
-    index), open issue bodies[:800 each] (first 10,
+    the task, TASKS.md[:2000], TOOLS.md (read whole - the index
+    must never silently truncate), open issue bodies[:800 each] (first 10,
     vault-first with gh fallback), git log -5, scratch/ filenames, and
     (since v0.3) for-fleet/ bottle headlines.
     NOT included: docs/, AGENTS.md, and issue COMMENTS (bodies only).
@@ -689,7 +689,7 @@ def build_context(task_description=None):
     # planned. An index the agent can't see is documentation for
     # humans; this one is part of its world-view.
     try:
-        parts.append("## My Tools\n" + Path("TOOLS.md").read_text()[:2000])
+        parts.append("## My Tools\n" + Path("TOOLS.md").read_text())
     except Exception:
         pass
 
