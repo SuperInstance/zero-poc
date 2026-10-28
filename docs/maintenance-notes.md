@@ -427,3 +427,13 @@ line itself (apostrophe plus doubled marker defeated its shell
 quoting across four retry commits; closed by hand). A mechanical
 completion check — claimed paths must exist before an outcome is
 recorded as completed — is the designed fix and is future work.
+
+**Fixed in v0.9.2 (2026-10-28).** verify_completion_claims() in
+agent.py extracts the paths a completion summary claims
+(backticked spans and bare path-like tokens; URLs excluded) and
+checks them against the working tree. A claim naming a file that
+does not exist downgrades the outcome to completed_unverified,
+names the missing paths in .agent-state.json (completion_missing)
+and in the MEMORY.md entry, and logs a warning. Existence only -
+the check does not judge contents. Six unit tests cover it, one
+built from run 40634497106 invented filename.

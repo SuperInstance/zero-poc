@@ -664,3 +664,36 @@ class TestTypeSafeAdapter(unittest.TestCase):
             self.assertIn("/v1/systemone", sent.full_url)
             self.assertEqual(sent.get_header("Authorization"), "Bearer k")
             self.assertEqual(answers["q"]["choice"], "yes")
+
+
+class CompletionCheckTests(TempCwdTestCase):
+    """Issue #11: a completion summary claimed files must exist."""
+
+    def test_existing_claimed_file_passes(self):
+        Path("reports/pending").mkdir(parents=True)
+        Path("reports/pending/x.md").write_text("real\n")
+        summary = "Filed the report in `reports/pending/x.md` and updated TASKS.md"
+        self.assertEqual(agent.verify_completion_claims(summary), [])
+
+    def test_invented_file_flagged(self):
+        summary = ("The weather report has been completed and filed in "
+                   "`reports/pending/weather_report_20231028.txt`.")
+        self.assertEqual(agent.verify_completion_claims(summary),
+                         ["reports/pending/weather_report_20231028.txt"])
+
+    def test_bare_path_claim_flagged(self):
+        summary = "Wrote docs/notes.md with the findings"
+        self.assertEqual(agent.verify_completion_claims(summary), ["docs/notes.md"])
+
+    def test_url_is_not_a_path(self):
+        summary = "Read https://example.com/docs/guide.md for reference"
+        self.assertEqual(agent.verify_completion_claims(summary), [])
+
+    def test_prose_only_passes(self):
+        self.assertEqual(agent.verify_completion_claims(
+            "Answered the question about the harbor"), [])
+
+    def test_backticked_bare_filenames_checked(self):
+        Path("DONE.md").write_text("x\n")
+        summary = "Wrote `DONE.md` and `GONE.md`"
+        self.assertEqual(agent.verify_completion_claims(summary), ["GONE.md"])

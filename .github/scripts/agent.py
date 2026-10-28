@@ -834,6 +834,35 @@ def parse_llm_decision(response):
     return None
 
 
+def verify_completion_claims(summary):
+    """Mechanical completion check (maintenance-notes issue #11).
+
+    Extract the repo paths a completion summary claims - backticked
+    spans and bare path-like tokens - and return those that do not
+    exist in the working tree. The loop's outcome used to be the
+    model's word alone: run 40634497106 claimed a filed report that
+    was never written. A summary may describe work however it
+    likes, but a file it names as filed must exist. Existence only:
+    contents are the record's business, not this check's. URLs are
+    not paths, and plain prose mentions of bare filenames are not
+    claims (a path claim is backticked, or contains a slash)."""
+    claimed = [s.strip() for s in re.findall(r"`([^`]+)`", summary or "")]
+    claimed += re.findall(
+        r"(?<![\w/.-])((?:[\w.-]+/)+[\w.-]+\.(?:md|txt|py|json|yml|yaml))",
+        summary or "")
+    missing = []
+    for cand in claimed:
+        cand = cand.rstrip(".,;:")
+        if not cand or "://" in cand or cand.startswith("/") or " " in cand:
+            continue
+        if "/" not in cand and not cand.endswith(
+                (".md", ".txt", ".py", ".json", ".yml", ".yaml")):
+            continue
+        if not Path(cand).exists() and cand not in missing:
+            missing.append(cand)
+    return missing
+
+
 def run_agent_loop(task_description=None, max_iterations=None):
     """Main ReAct loop."""
     max_iter = max_iterations or MAX_ITERATIONS
@@ -853,6 +882,7 @@ def run_agent_loop(task_description=None, max_iterations=None):
     started_utc = datetime.now(timezone.utc).isoformat()
     outcome = "unknown"
     iterations_used = 0
+    completion_missing = []
     substantive = False
 
     # Sprint-0 D4: duty cycle overrides the gate — after 6h without
@@ -947,8 +977,19 @@ def run_agent_loop(task_description=None, max_iterations=None):
             summary = decision.get("summary", "Task complete")
             log(f"Agent reports done: {summary}")
             if substantive or task_description:
-                outcome = f"completed: {summary[:200]}"
-                update_memory(f"Completed: {summary}")
+                missing = verify_completion_claims(summary)
+                if missing:
+                    completion_missing = missing
+                    outcome = (f"completed_unverified: {summary[:140]} "
+                               f"[claimed paths missing: {', '.join(missing)}]")
+                    update_memory(
+                        f"Completed (UNVERIFIED - claimed files do not "
+                        f"exist: {', '.join(missing)}): {summary}")
+                    log(f"Completion check: claimed paths missing: "
+                        f"{missing}", "WARN")
+                else:
+                    outcome = f"completed: {summary[:200]}"
+                    update_memory(f"Completed: {summary}")
             else:
                 # Sprint-0 D3: a schedule-driven cycle that completed
                 # nothing substantive writes NO "Completed:" line — that
@@ -1009,6 +1050,8 @@ def run_agent_loop(task_description=None, max_iterations=None):
         "last_substantive_utc": next_substantive_ts(
             prev, substantive or bool(task_description), started_utc),
     }
+    if completion_missing:
+        state["completion_missing"] = completion_missing
     # Sprint-1 shadow gate: what minigate WOULD have decided this cycle.
     # Log-only — agent.py never acts on it. Absent unless think.yml set it.
     if os.environ.get("SHADOW_GATE"):
