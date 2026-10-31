@@ -1,15 +1,11 @@
 ### Issue Resolution Plan
 
 #### Current Status:
-- Attempted to list issues using the GitHub API, but received a 404 error.
+- The attempt to list issues via the GitHub API resulted in a 404 error.
 - The repository may not exist, or there could be a permissions issue.
 
 #### Next Steps:
-1. Verify repository ownership and permissions.
-   - Confirm the repository URL and owner handle.
-2. Check if the repository exists.
-   - Use the GitHub website to manually verify the repository's existence.
-3. If the repository exists, investigate permissions.
-   - Ensure that the token used has the necessary permissions to access the repository.
-4. If the repository does not exist, notify the owner to create it or provide the correct repository URL.
-5. Escalate the issue to GitHub Support if the problem persists.
+1. **Verify Repository Details:** Check the repository name, owner, and visibility settings to ensure they are correct.
+2. **Check Permissions:** Confirm that the access token used has the necessary permissions to access the repository and list issues.
+3. **Investigate Further:** If the repository exists and permissions are correct, escalate the issue to GitHub support with detailed error messages and context.
+4. **Update Documentation:** Document the findings and steps taken in the issue_resolution_plan.md file.
