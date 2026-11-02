@@ -1,0 +1,1 @@
+To investigate the storage of Telegram responses, I will first confirm the location of the 'conversation/' directory within the repository. Then, I will verify that the responses are being saved correctly and are accessible as expected. If any issues are found, I will document them and propose solutions.

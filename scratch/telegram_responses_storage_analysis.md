@@ -1,0 +1,1 @@
+The 'conversation/' directory exists and contains two subdirectories: 'inputs' and 'outputs'. This confirms that Telegram responses are stored in the 'conversation/inputs/' and 'conversation/outputs/' directories. Next, I will verify that the responses are being saved correctly by checking the contents of these directories.
