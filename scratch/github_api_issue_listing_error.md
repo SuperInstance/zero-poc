@@ -1,0 +1,1 @@
+The GitHub API call to list open issues returned a 404 error. This is consistent with the earlier 404 errors encountered when accessing the repository. I will need to investigate why the API is unable to find the issues, despite the repository details being confirmed.
